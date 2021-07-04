@@ -38,11 +38,24 @@ Data that is goint to be used:
 ```{r}
 phenotypes_url <- "https://docs.google.com/spreadsheets/d/1zC8c44uLXKEccDdUKaMmhRGn0JU5wNt1iOYS1xmPWGs/edit#gid=1931442445"
 
+gen_map_url <- "https://docs.google.com/spreadsheets/d/1POtF_xQXIB88bn-VIvCxGSI5ymqwrOC0RqNnWwTl3eg/edit#gid=0"
+
 # Importing lsmeans from the sheets document
 ionomics_phenotypes_raw <- phenotypes_url %>%
   as_id %>%
   range_read(., na = "NA") %>%
   select(id = GEN, hun = HUN, matches("seed|leaf"))
+
+#Importing the genetic map of the CML312xW22 HUN F2 mapping population
+
+gen_map <- gen_map_url %>%
+  as_id %>%
+  range_read(., na = "NA", col_types = "c") 
+
+gen_map <- gen_map %>%
+  mutate(id = ifelse(is.na(id), "", id))
+
+
 ```
 
 Transforming data:
@@ -62,7 +75,7 @@ ionomics_phenotypes <- ionomics_phenotypes_raw %>%
 hun_color_scheme <- c("HUN" = "#EDB120", "WT" = "#77AC30")
 ```
 
-Declaring output files in drive
+Declaring output directories in drive
 
 ```{r}
 output_tables_drive_id <- "https://drive.google.com/drive/folders/1xYdj_AHkOsQaOoY6SgKDTuHZBoiww9Ci" %>%
@@ -102,7 +115,8 @@ ion_tissue_kw <- ionomics_phenotypes %>%
   group_by(ion, tissue) %>%
   nest %>%
   mutate(kw = map(.x = data, 
-                  .f = ~ kruskal.test(value ~ hun, data = .x))) %>%
+                  .f = ~ kruskal.test(value ~ hun, 
+                                      data = .x))) %>%
   mutate(kw_tidy = map(.x = kw, .f = ~ tidy(.x))) %>%
   ungroup %>%
   select(ion, tissue, kw_tidy) %>%
@@ -181,7 +195,8 @@ ionomics_raincloud_plots <- ionomics_phenotypes %>%
   nest  %>%
   mutate(plot = map2(.x = data, 
                      .y = tissue,
-                     .f = ~ raincloud_plot(data = .x, tissue = .y))) %>%
+                     .f = ~ raincloud_plot(data = .x, 
+                                           tissue = .y))) %>%
   select(ion, plot) %>%
   group_by(ion) %>%
   summarise(plot = list(plot)) %>% 
@@ -220,5 +235,85 @@ drive_upload(
 
 ```
 
+Create CrossObject
 
+1. Create new traits: proportion between leaf/seed values
+2. Create CrossObject
+
+```{r}
+# ion phenotypes
+phenotypes_ion <- ionomics_phenotypes %>%
+  mutate(tissue = tolower(tissue)) %>%
+  mutate(name = paste0(ion, "_", tissue)) %>%
+  select(-c(ion, tissue)) %>%
+    pivot_wider(names_from = name, values_from = value)
+
+# ratio between leaf/seed
+phenotypes_ratio <- ionomics_phenotypes %>%
+  mutate(tissue = tolower(tissue)) %>%
+  pivot_wider(names_fro = tissue, values_from = value) %>%
+  mutate(ratio = leaf/seed) %>%
+  select(-c(leaf:seed)) %>%
+  mutate(ion = paste0(ion, "_ratio")) %>%
+  pivot_wider(names_from = ion, values_from = ratio)
+
+# join all phenotypes
+phenotypes_all <- left_join(phenotypes_ion,
+                            phenotypes_ratio) %>%
+  select(id, hun, sort(names(.)))
+
+# join all phenotypes with the genetic map and create the CrossObject
+crossobject_ion_hun <- gen_map %>%
+  filter(id %in% c("", phenotypes_all$id)) %>%
+  left_join(phenotypes_all) %>%
+  select(all_of(names(phenotypes_all)), names(.)) %>%
+  mutate(across(everything(), ~ as.character(.))) %>%
+  mutate(across(all_of(names(phenotypes_all)),
+                ~ ifelse(is.na(.) & row_number() < 3, "", .)))
+
+# create directory for the CrossObject
+dir.create(file.path(paste0(getwd(), "/output"), "crossobject"))
+
+# save crossobject
+write_csv(crossobject_ion_hun,
+          "output/crossobject/crossobject_ion_hun.csv")
+
+# upload crossobject to drive
+drive_upload(
+  media = "output/crossobject/crossobject_ion_hun.csv",
+  path = output_tables_drive_id,
+  name = "crossobject_ion_hun.csv",
+  type = "spreadsheet"
+  )
+```
+
+QTL analysis
+
+1. Import CrossObject
+
+```{r}
+
+ion_crossobject_dup <-  read.cross(
+  format = "csv",
+  dir = "output/crossobject",
+  file = "crossobject_ion_hun.csv",
+  genotypes = c("AA", "AB", "BB"),
+  alleles = c("CML", "W22"),
+  BC.gen = 0,
+  F.gen = 2,
+  estimate.map = F)
+
+dupmarkers <- findDupMarkers(ion_crossobject_dup, exact.only = T) %>%
+  unlist(use.names = F)
+
+ion_crossobject <- ion_crossobject_dup %>%
+  drop.markers(dupmarkers)
+
+ion_crossobject_dup %>%
+  plotMap
+
+
+
+
+```
 
