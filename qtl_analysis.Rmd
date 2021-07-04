@@ -24,16 +24,12 @@ library(qtl)
 set.seed()
 
 ```
-
 Importing data
 
 Data that is goint to be used:
 
 1. Ionomics Data
 2. CML312 x W22 HUN mapping population genetic map
-
-
-
 ```{r}
 
 phenotypes_url <- "https://docs.google.com/spreadsheets/d/1zC8c44uLXKEccDdUKaMmhRGn0JU5wNt1iOYS1xmPWGs/edit#gid=1931442445"
