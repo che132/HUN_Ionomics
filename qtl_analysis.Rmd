@@ -13,16 +13,20 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Load libraries and set seed
+Load libraries, set seed and set working directory
 
 ```{r}
-
 library(tidyverse)
 library(googlesheets4)
 library(googledrive)
 library(qtl)
-set.seed()
+library(broom)
 
+# Set the seed as the same value as previous analysis
+set.seed(54955149)
+
+# set working directory the same as project directory
+setwd("D:/RS Lab/HUN_Ionomics")
 ```
 Importing data
 
@@ -30,17 +34,191 @@ Data that is goint to be used:
 
 1. Ionomics Data
 2. CML312 x W22 HUN mapping population genetic map
-```{r}
 
+```{r}
 phenotypes_url <- "https://docs.google.com/spreadsheets/d/1zC8c44uLXKEccDdUKaMmhRGn0JU5wNt1iOYS1xmPWGs/edit#gid=1931442445"
 
-# Importing lsmeans from the 
-ionomics_phenotypes <- phenotypes_url %>%
+# Importing lsmeans from the sheets document
+ionomics_phenotypes_raw <- phenotypes_url %>%
   as_id %>%
-  range_read(.)
+  range_read(., na = "NA") %>%
+  select(id = GEN, hun = HUN, matches("seed|leaf"))
+```
 
+Transforming data:
 
+- Selecting ionomic phenotypes for leaf and seed
+- Declaring color scheme for HUN levels: hun (Non-Pikachu yellow) and wt (green).
+
+```{r}
+ionomics_phenotypes <- ionomics_phenotypes_raw %>%
+  filter(id != "ARES") %>%
+  pivot_longer(-c(id, hun)) %>%
+  mutate(name = gsub("\\.SR", "", name)) %>%
+  separate(name, into = c("ion", "tissue")) %>%
+  filter(!is.na(value))
+
+# Declaring color scheme for hun 
+hun_color_scheme <- c("HUN" = "#EDB120", "WT" = "#77AC30")
+```
+
+Declaring output files in drive
+
+```{r}
+output_tables_drive_id <- "https://drive.google.com/drive/folders/1xYdj_AHkOsQaOoY6SgKDTuHZBoiww9Ci" %>%
+  as_id
+
+output_plots_drive_id <- "https://drive.google.com/drive/folders/1L1gh2-bIE_0CGPVt7iy7MVL7YuIs0xDD" %>%
+  as_id
+```
+
+First Look at data.
+
+1. Compare means of HUN and WT families using Kruskal-Wallis non parametric test for every ion and tissue.
+2. Make raincloud-plots by ion and tissue, and compare between medians using Kruskal-Wallis non parametric test.
+
+```{r}
+# transform p.value to significance codes
+p.value_to_ast <- function(p.value) {
+  
+  ast <- case_when(
+    p.value < 0.001 ~ "***",
+    p.value >= 0.001 & p.value < 0.01 ~ "**",
+    p.value >= 0.01 & p.value < 0.05 ~ "*",
+    p.value >= 0.05 & p.value < 0.01 ~ ".",
+    p.value > 0.01 ~ "NS",
+    T ~ NA_character_)
+  
+  return(ast)
+  
+}
+
+# create directory for results
+dir.create(file.path(getwd(), "output"))
+dir.create(file.path(paste0(getwd(), "/output"), "tables"))
+
+# Compare distributions with kruskal-wallis test
+ion_tissue_kw <- ionomics_phenotypes %>%
+  group_by(ion, tissue) %>%
+  nest %>%
+  mutate(kw = map(.x = data, 
+                  .f = ~ kruskal.test(value ~ hun, data = .x))) %>%
+  mutate(kw_tidy = map(.x = kw, .f = ~ tidy(.x))) %>%
+  ungroup %>%
+  select(ion, tissue, kw_tidy) %>%
+  unnest(kw_tidy) %>%
+  select(ion:p.value) %>%
+  mutate(sig = p.value_to_ast(p.value)) %>%
+  arrange(ion, tissue)
+
+# save kruskal-wallis test df
+write_csv(ion_tissue_kw,
+          "output/tables/ion_tissue_kruskal_wallis_test.csv")
+
+# upload table to drive
+drive_upload(
+  media = "output/tables/ion_tissue_kruskal_wallis_test.csv",
+  path = output_tables_drive_id,
+  name = "ion_tissue_kruskal_wallis_test.csv",
+  type = "spreadsheet"
+  )
+
+# raincloud plots function
+raincloud_plot <- function(data, tissue) {
+  
+  plot <- data %>%
+    ggplot(data =., 
+           aes(x = hun, 
+               y = value, 
+               fill = hun)
+           ) +
+    ggdist::stat_halfeye(aes(fill = hun),
+                         adjust = .5, 
+                         width = .6, 
+                         .width = 0, 
+                         justification = -.2, 
+                         point_colour = NA,
+                         color = "black",
+                         ) +
+    geom_boxplot(
+      width = .15, 
+      outlier.shape = NA,
+      color = "black"
+      ) +
+    gghalves::geom_half_point(
+      ## draw jitter on the left
+      side = "l", 
+      ## control range of jitter
+      range_scale = .4, 
+      ## add some transparency
+      alpha = .5,
+      shape = 21,
+      color = "black"
+      ) +
+    ggpubr::stat_compare_means(
+      comparisons = list(c("HUN", "WT")),
+      label = "p.signif",
+      method = "wilcox.test") +
+    xlab(NULL) +
+    ylab("ppm") +
+    theme(
+      panel.background = element_rect(fill = "white", 
+                                      colour ="grey50"),
+      plot.title = element_text(hjust = 0.5)
+      ) +
+    scale_fill_manual(
+      values = hun_color_scheme, guide = NULL
+      ) +
+    ggtitle(tissue)
+  
+  return(plot)
+}
+
+# Note: comparison of distributions using kruskal-wallis
+ionomics_raincloud_plots <- ionomics_phenotypes %>%
+  group_by(ion, tissue) %>%
+  mutate(hun = factor(hun, levels = c("WT", "HUN"))) %>%
+  nest  %>%
+  mutate(plot = map2(.x = data, 
+                     .y = tissue,
+                     .f = ~ raincloud_plot(data = .x, tissue = .y))) %>%
+  select(ion, plot) %>%
+  group_by(ion) %>%
+  summarise(plot = list(plot)) %>% 
+  mutate(title = paste0("Ion: ", ion)) %>%
+  mutate(wrap = map2(
+    .x = plot, 
+    .y = title,
+    .f = ~ patchwork::wrap_plots(.x, guides = "collect") +
+      patchwork::plot_annotation( 
+        title = .y,
+        theme = theme(plot.title = element_text(hjust = 0.5)
+                      )
+        )
+    )) %>%
+  ungroup
+
+p <- ionomics_raincloud_plots$wrap
+
+# create directory for plots
+dir.create(file.path(paste0(getwd(), "/output"), "plots"))
+dir.create(file.path(paste0(getwd(), "/output/plots"), "rainclowd_plots"))
+
+# Saving plots into a single pdf
+pdf("output/plots/rainclowd_plots/ions_raincloud_plots.pdf",
+    onefile = TRUE)
+map(p, ~ print(.x))
+dev.off()
+
+#save raincloud plots to google drive
+drive_upload(
+  media = "output/plots/rainclowd_plots/ions_raincloud_plots.pdf",
+  path = output_plots_drive_id,
+  name = "ions_raincloud_plots.pdf",
+  type = "pdf"
+  )
 
 ```
+
 
 
