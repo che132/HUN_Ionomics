@@ -1,5 +1,5 @@
 # HUN_Ionomics
-Analysis ofthe ionomic data for the CML312 x W22 HUN mapping population
+Analysis of the ionomic data from the CML312 x W22 HUN mapping population
 
 New line again
 Add a line from github
