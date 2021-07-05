@@ -1,0 +1,14 @@
+    BC(0)F(2) cross
+
+    No. individuals:    135 
+
+    No. phenotypes:     1 
+    Percent phenotyped: 100 
+
+    No. chromosomes:    10 
+        Autosomes:      1 2 3 4 5 6 7 8 9 10 
+
+    Total markers:      751 
+    No. markers:        141 85 102 80 52 61 66 63 62 39 
+    Percent genotyped:  100 
+    Genotypes (%):      AA:25.2  AB:50.7  BB:24.1  not BB:0.0  not AA:0.0 
