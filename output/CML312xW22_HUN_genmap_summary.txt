@@ -8,7 +8,7 @@
     No. chromosomes:    10 
         Autosomes:      1 2 3 4 5 6 7 8 9 10 
 
-    Total markers:      751 
-    No. markers:        141 85 102 80 52 61 66 63 62 39 
+    Total markers:      756 
+    No. markers:        141 85 102 80 57 61 66 63 62 39 
     Percent genotyped:  100 
-    Genotypes (%):      AA:25.2  AB:50.7  BB:24.1  not BB:0.0  not AA:0.0 
+    Genotypes (%):      AA:25.3  AB:50.4  BB:24.2  not BB:0.0  not AA:0.0 
