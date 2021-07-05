@@ -97,7 +97,8 @@ FUNGUS_MAP <- mstmap(
 gt <- geno.table(FUNGUS_MAP)
 
 fungus_marker_weird <- rownames(gt[gt$P.value < 0.05/totmar(FUNGUS_MAP),])
-
+fungus_marker_weird <- 
+  fungus_marker_weird[! grepl("5_", fungus_marker_weird)]
 # weird markers identified manually
 fungus_marker_manual <- c(
   "2_221501477", "5_17708059", "5_31015101", "5_42255994", 
@@ -168,8 +169,32 @@ sink()  # returns output to the console
 write.cross(
   cross = FUNGUS_MAP,
   format = "csv",
-  filestem = "output/crossobject/cml312xw22_hun_genmap-csv"
+  filestem = "output/crossobject/cml312xw22_hun_genmap"
   )
+
+# save genetic map in google drive
+drive_upload(
+  media = "output/crossobject/cml312xw22_hun_genmap.csv",
+  path = input_data_drive_id,
+  name = "cml312xw22_hun_genmap.csv",
+  type = "spreadsheet",
+  overwrite = T
+)
+
+# Identify markers removed
+markers_removed <- c(
+  fungus_marker_.2, 
+  fungus_dupmarkers,
+  fungus_marker_weird, 
+  fungus_marker_manual
+  ) %>%
+  enframe(value = "marker", name = NULL) %>%
+  separate(marker, into = c("chr", "pos"), remove = F) %>%
+  mutate(across(c(chr, pos), ~ as.integer(.))) %>%
+  arrange(chr, pos)
+  
+
+
 
 
   
