@@ -164,8 +164,12 @@ sink("output/CML312xW22_HUN_genmap_summary.txt")
 print(summary(FUNGUS_MAP))
 sink()  # returns output to the console
   
-
-
+# save crossobject
+write.cross(
+  cross = FUNGUS_MAP,
+  format = "csv",
+  filestem = "output/crossobject/cml312xw22_hun_genmap-csv"
+  )
 
 
   
