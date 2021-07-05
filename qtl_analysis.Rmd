@@ -38,7 +38,7 @@ Data that is goint to be used:
 ```{r}
 phenotypes_url <- "https://docs.google.com/spreadsheets/d/1zC8c44uLXKEccDdUKaMmhRGn0JU5wNt1iOYS1xmPWGs/edit#gid=1931442445"
 
-gen_map_url <- "https://docs.google.com/spreadsheets/d/1POtF_xQXIB88bn-VIvCxGSI5ymqwrOC0RqNnWwTl3eg/edit#gid=0"
+gen_map_url <- "https://docs.google.com/spreadsheets/d/1Abx_s6XxjG91YlLIaFxNn4HNcbnA3lKRgR0jw2DZZek/edit#gid=1187220000"
 
 # Importing lsmeans from the sheets document
 ionomics_phenotypes_raw <- phenotypes_url %>%
@@ -54,8 +54,6 @@ gen_map <- gen_map_url %>%
 
 gen_map <- gen_map %>%
   mutate(id = ifelse(is.na(id), "", id))
-
-
 ```
 
 Transforming data:
@@ -75,13 +73,16 @@ ionomics_phenotypes <- ionomics_phenotypes_raw %>%
 hun_color_scheme <- c("HUN" = "#EDB120", "WT" = "#77AC30")
 ```
 
-Declaring output directories in drive
+Declaring input and output directories in drive
 
 ```{r}
 output_tables_drive_id <- "https://drive.google.com/drive/folders/1xYdj_AHkOsQaOoY6SgKDTuHZBoiww9Ci" %>%
   as_id
 
 output_plots_drive_id <- "https://drive.google.com/drive/folders/1L1gh2-bIE_0CGPVt7iy7MVL7YuIs0xDD" %>%
+  as_id
+
+input_data_drive_id <-  "https://drive.google.com/drive/u/0/folders/19bOcGgnv6YvjdoQtVXsehf6_2NpCkynS" %>%
   as_id
 ```
 
@@ -264,6 +265,11 @@ phenotypes_all <- left_join(phenotypes_ion,
 
 # join all phenotypes with the genetic map and create the CrossObject
 crossobject_ion_hun <- gen_map %>%
+  mutate(enchar = nchar(id)) %>%
+  mutate(id = ifelse(enchar != 6, 
+                     gsub("HUN", "HUN0", id),
+                     id)) %>%
+  select(-enchar) %>%
   filter(id %in% c("", phenotypes_all$id)) %>%
   left_join(phenotypes_all) %>%
   select(all_of(names(phenotypes_all)), names(.)) %>%
@@ -281,7 +287,7 @@ write_csv(crossobject_ion_hun,
 # upload crossobject to drive
 drive_upload(
   media = "output/crossobject/crossobject_ion_hun.csv",
-  path = output_tables_drive_id,
+  path = input_data_drive_id,
   name = "crossobject_ion_hun.csv",
   type = "spreadsheet"
   )
@@ -290,10 +296,15 @@ drive_upload(
 QTL analysis
 
 1. Import CrossObject
+2. Create a pheno.col df
+3. Identify covariate (genotype on marker 5_2269274)
+4. Calculate genoprob and simprob
+5. Scanone with an additive covariate model 
 
 ```{r}
 
-ion_crossobject_dup <-  read.cross(
+# Import CrossObject
+ion_crossobject <-  read.cross(
   format = "csv",
   dir = "output/crossobject",
   file = "crossobject_ion_hun.csv",
@@ -303,14 +314,150 @@ ion_crossobject_dup <-  read.cross(
   F.gen = 2,
   estimate.map = F)
 
-dupmarkers <- findDupMarkers(ion_crossobject_dup, exact.only = T) %>%
-  unlist(use.names = F)
+# creating a pheno.col dataframe
+ion_pheno.col <- ion_crossobject %>%
+  phenames %>%
+  enframe(name = "pheno.col", value = "phenotype") %>%
+  filter(row_number() > 2)
+  
+# Identifying covariate (hun genotype)
+hun_cov <- pull.geno(ion_crossobject, chr = 5) %>% .[,"5_2269274"]
+hun_cov[hun_cov == 3] <- 0
 
-ion_crossobject <- ion_crossobject_dup %>%
-  drop.markers(dupmarkers)
+# Create directory to save the results
 
-ion_crossobject_dup %>%
-  plotMap
+dir.create(file.path(paste0(getwd(), "/output"), 
+                     "qtl_objects"))
+dir.create(file.path(paste0(getwd(), "/output/qtl_objects"),
+                     "scanone"))
+dir.create(file.path(paste0(getwd(), "/output/qtl_objects"),
+                     "permutations"))
+
+# calculate the genetic probabilities
+ion_crossobject <- calc.genoprob(
+  ion_crossobject, 
+  step = 0.5
+  )
+
+# simulating genotypes
+ion_crossobject <- sim.geno(
+  ion_crossobject,
+  n.draws = 128, 
+  step = 0.5, 
+  error.prob = 0.001
+  )
+
+# Using scanone applying an additive covariate model
+
+ion_crossobject_addcov.out.hk <- 
+  scanone(ion_crossobject, 
+          method = "hk",
+          pheno.col = ion_pheno.col$pheno.col, 
+          addcovar = hun_cov
+          )
+
+# save scanone
+save(
+  list = c("ion_crossobject_addcov.out.hk"), 
+  file = "output/qtl_objects/scanone/ion_crossobject_addcov.out.hk.RData"
+)
+
+# Permutation test (1000 permutations)
+ion_crossobject_addcov.operm <- 
+  scanone(ion_crossobject, 
+          method = "hk",
+          pheno.col = ion_pheno.col$pheno.col, 
+          addcovar = hun_cov,
+          n.perm = 1000
+          )
+# save permutation test
+save(
+  list = c("ion_crossobject_addcov.operm"), 
+  file = "output/qtl_objects/permutations/ion_crossobject_addcov.operm.RData"
+)
+
+# Summary, alpha = 0.05
+summary(ion_crossobject_addcov.out.hk, 
+        perms = ion_crossobject_addcov.operm, alpha = c(0.1), 
+        format= "tabByChr")
+
+
+# Using scanone aplying an interactive covariate
+
+ion_crossobject_intcov.out.hk <- 
+  scanone(ion_crossobject, 
+          method = "hk",
+          pheno.col = ion_pheno.col$pheno.col, 
+          addcovar = hun_cov,
+          intcovar = hun_cov
+          )
+
+# save scanone
+save(
+  list = c("ion_crossobject_intcov.out.hk"), 
+  file = "output/qtl_objects/scanone/ion_crossobject_intcov.out.hk.RData"
+)
+
+# Permutation test
+ion_crossobject_intcov.operm <- 
+  scanone(ion_crossobject, 
+          method = "hk",
+          pheno.col = ion_pheno.col$pheno.col, 
+          addcovar = hun_cov,
+          intcovar = hun_cov,
+          n.perm = 1000
+          )
+
+# save permutation test
+save(
+  list = c("ion_crossobject_intcov.operm"), 
+  file = "output/qtl_objects/permutations/ion_crossobject_intcov.operm.RData"
+)
+
+# Summary 
+summary(
+  ion_crossobject_intcov.out.hk, 
+  perms = ion_crossobject_intcov.operm, 
+  alpha = c(0.05), 
+  format= "tabByChr"
+  )
+
+# Comparing models and looking for evidence for interaction between QTLs and HUN covariate
+
+# scanone
+ion_int_add.out.hk <- c(
+  ion_crossobject_intcov.out.hk,
+  ion_crossobject_intcov.out.hk - ion_crossobject_addcov.out.hk,
+  labels = c("f", "i")
+)
+
+# save scanone
+save(
+  list = c("ion_int_add.out.hk"), 
+  file = "output/qtl_objects/scanone/ion_int_add.out.hk.RData"
+)
+
+# permutations
+ion_int_add.operm <- cbind(
+  ion_crossobject_intcov.operm,
+  ion_crossobject_intcov.operm - ion_crossobject_addcov.operm,
+  labels = c("f", "i")
+)
+
+# save permutation test
+save(
+  list = c("ion_int_add.operm"), 
+  file = "output/qtl_objects/permutations/ion_int_add.operm.RData"
+)
+
+# Summary
+summary(
+  ion_int_add.out.hk, 
+  perms = ion_int_add.operm, 
+  alpha = c(0.05), 
+  format = "tabByChr"
+  )
+
 
 
 
