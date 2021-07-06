@@ -891,11 +891,18 @@ write_csv(
   "output/tables/scanone_summary/scanone_summary_int_add_cov.csv"
 )
 
+ions_interesting_qtl_addint <- scanone_summary_int_add_cov %>%
+  arrange(phenotype) %>%
+  separate(phenotype, into = c("phenotype2", "model"), sep = "\\.",
+           remove = F) %>%
+  group_by(phenotype2, chr) %>%
+  filter(n() != 1)
+
 # Create dataframe for lodplots
 ion_int_add_cov_lodplot_df <- lodplot_map_df(
-  SCANONE = ion_crossobject_int_addcov.out.hk,
+  SCANONE = ion_int_add.out.hk,
   SUMMARY = scanone_summary_int_add_cov,
-  PERMS = ion_crossobject_int_addcov.operm,
+  PERMS = ion_int_add.operm,
   alpha = 0.1,
   ci.funciton = "lodint_add"
   )
@@ -904,6 +911,7 @@ ion_int_add_cov_lodplot_df <- lodplot_map_df(
 ion_int_add_cov_lodplots_all <- ion_int_add_cov_lodplot_df %>%
   group_by(phenotype) %>%
   nest %>%
+  arrange(phenotype) %>%
   mutate(
     title = paste0(
       "QTL analysis for int_additive covariate for ",
@@ -918,7 +926,7 @@ ion_int_add_cov_lodplots_all <- ion_int_add_cov_lodplot_df %>%
           data =., 
           aes(x = cM, 
               y = lod, 
-              group = int_adderaction(chr, alpha)
+              group = interaction(chr, alpha)
           )
           ) +
             geom_line(size = 0.75, alpha = 0.3) +
@@ -932,7 +940,7 @@ ion_int_add_cov_lodplots_all <- ion_int_add_cov_lodplot_df %>%
             alpha = 0.8
             ) +
           geom_hline( 
-            aes(yint_addercept = unique(threshold)),
+            aes(yintercept = unique(threshold)),
             color = "red",
             linetype = 2
             ) +
@@ -952,9 +960,7 @@ ion_int_add_cov_lodplots_all <- ion_int_add_cov_lodplot_df %>%
     )
   ) 
 
-# create directory for plots
-dir.create(file.path(paste0(getwd(), "/output/plots"),
-                     "scanone_lodplots"))
+
 p <- ion_int_add_cov_lodplots_all$plot
 
 # Saving plots int_addo a single pdf
@@ -982,15 +988,16 @@ ggsave(
 
 # all significant plots in the same page
 
-ion_int_add_cov_lodplots_signif_single <- ion_int_add_cov_lodplots_signif %>%
+ion_int_add_cov_lodplots_interesting <- ion_int_add_cov_lodplots_all %>%
+  semi_join(ions_interesting_qtl_addint) %>%
   select(phenotype, data) %>%
   unnest(data) %>% {
     ggplot(data =., 
-           aes(x = cM, y = lod, group = int_adderaction(chr, alpha))) +
+           aes(x = cM, y = lod, group = interaction(chr, alpha))) +
       geom_line(size = 0.75, alpha = 0.3) +
       geom_line(aes(alpha = alpha), size = 0.75) +
       geom_ribbon(aes(ymin = 0, ymax = y), fill = "red", alpha = 0.8 ) +
-      geom_hline(aes(yint_addercept = threshold), color = "red",
+      geom_hline(aes(yintercept = threshold), color = "red",
                  linetype = 2) +
       scale_alpha_identity() +
       scale_x_continuous(name = "chr", 
@@ -1004,8 +1011,8 @@ ion_int_add_cov_lodplots_signif_single <- ion_int_add_cov_lodplots_signif %>%
 
 ggsave(
    filename =
-     "output/plots/scanone_lodplots/ion_int_add_cov_lodplots_signif_single.pdf", 
-   plot = ion_int_add_cov_lodplots_signif_single, 
+     "output/plots/scanone_lodplots/ion_int_add_cov_lodplots_interesting.pdf", 
+   plot = ion_int_add_cov_lodplots_interesting, 
    width = 15, 
    height = 18
 )
