@@ -27,8 +27,7 @@ library(plyranges)
 # Set the seed as the same value as previous analysis
 set.seed(54955149)
 
-# set working directory the same as project directory
-setwd("D:/RS Lab/HUN_Ionomics")
+# Note: don't forget to set working directory the same as project directory
 ```
 
 Functions
@@ -192,8 +191,7 @@ lodplot_map_df <- function(SCANONE, PERMS, SUMMARY, ...) {
   )
   
   d <- SUMMARY %>%
-    select(phenotype, chr, ci.low, ci.high) %>%
-    rename(phenotype = phenotype)
+    select(phenotype, chr, ci.low, ci.high)
   
   e <- a %>%
     left_join(dist_cM, by = "chr") %>%
@@ -211,7 +209,7 @@ lodplot_map_df <- function(SCANONE, PERMS, SUMMARY, ...) {
       .l = .,
       .f = ~ with( 
         list(...),
-        ifelse(between(pos, ci.low, ci.high),
+        ifelse(dplyr::between(pos, ci.low, ci.high),
                lod,
                NA_real_
                ))))  %>%
@@ -506,6 +504,8 @@ save(
   file = "output/qtl_objects/scanone/ion_crossobject_addcov.out.hk.RData"
 )
 
+load("output/qtl_objects/scanone/ion_crossobject_addcov.out.hk.RData")
+
 # Permutation test (1000 permutations)
 ion_crossobject_addcov.operm <- 
   scanone(ion_crossobject, 
@@ -519,6 +519,8 @@ save(
   list = c("ion_crossobject_addcov.operm"), 
   file = "output/qtl_objects/permutations/ion_crossobject_addcov.operm.RData"
 )
+
+load("output/qtl_objects/permutations/ion_crossobject_addcov.operm.RData")
 
 # Summary, alpha = 0.05
 summary(
@@ -697,6 +699,8 @@ save(
   file = "output/qtl_objects/permutations/ion_crossobject_intcov.operm.RData"
 )
 
+load("output/qtl_objects/permutations/ion_crossobject_intcov.operm.RData")
+
 # Summary 
 summary(
   ion_crossobject_intcov.out.hk, 
@@ -870,6 +874,8 @@ save(
   file = "output/qtl_objects/permutations/ion_int_add.operm.RData"
 )
 
+load("output/qtl_objects/permutations/ion_int_add.operm.RData")
+
 # Summary
 summary(
   ion_int_add.out.hk, 
@@ -897,7 +903,7 @@ ions_interesting_qtl_addint <- scanone_summary_int_add_cov %>%
   separate(phenotype, into = c("phenotype2", "model"), sep = "\\.",
            remove = F) %>%
   group_by(phenotype2, chr) %>%
-  filter(n() != 1)
+  filter(dplyr::n() != 1)
 
 # Create dataframe for lodplots
 ion_int_add_cov_lodplot_df <- lodplot_map_df(
@@ -1055,6 +1061,7 @@ save(
   file = "output/qtl_objects/permutations/ion_crossobject_WT.operm.RData"
 )
 
+load("output/qtl_objects/permutations/ion_crossobject_WT.operm.RData")
 # Summary, alpha = 0.05
 summary(
   ion_crossobject_WT.out.hk,
@@ -1166,7 +1173,7 @@ ggsave(
 # all significant plots in the same page
 
 ion_WT_lodplots_signif <- ion_WT_lodplots_all %>%
-  semi_join(ions_interesting_qtl_addint) %>%
+  semi_join(ion_WT_lodplots_signif) %>%
   select(phenotype, data) %>%
   unnest(data) %>% {
     ggplot(data =., 
@@ -1230,6 +1237,8 @@ save(
   list = c("ion_crossobject_HUN.operm"), 
   file = "output/qtl_objects/permutations/ion_crossobject_HUN.operm.RData"
 )
+
+load(file = "output/qtl_objects/permutations/ion_crossobject_HUN.operm.RData")
 
 # Summary, alpha = 0.05
 summary(
@@ -1382,7 +1391,10 @@ qtl_detected_all <- bind_rows(
   ions_interesting_qtl_addint %>% mutate(model = "addint"),
   scanone_summary_WT %>% mutate(model = "WT"),
   scanone_summary_HUN %>% mutate(model = "HUN")
-  ) 
+  ) %>%
+  separate(phenotype, into = c("phenotype", "sufix"), sep = "\\.") %>%
+  mutate(model = ifelse(!is.na(sufix), paste0(model, ".", sufix), model)) %>%
+  select(-c(sufix, phenotype2))
 
 # Combine all information for plots
 qtl_detected_all_lodplot <- bind_rows(
@@ -1393,8 +1405,10 @@ qtl_detected_all_lodplot <- bind_rows(
   ion_HUN_lodplots_all %>% mutate(model = "HUN")
   ) %>%
   select(phenotype, data, model) %>%
-  semi_join(qtl_detected_all) %>%
-  arrange(phenotype)
+  separate(phenotype, into = c("phenotype", "sufix"), sep = "\\.") %>%
+  mutate(model = ifelse(!is.na(sufix), paste0(model, ".", sufix), model)) %>%
+  select(-sufix) %>%
+  semi_join(qtl_detected_all) %>% distinct
 
 # stablish a color scheme for the models in the plots
 
@@ -1405,15 +1419,6 @@ model_color_scheme <-
     )
 
 ion_lodplots_all_df <- qtl_detected_all_lodplot %>%
-  mutate(prefix = str_extract(phenotype, "\\.(f|i)$")) %>%
-  mutate(model = 
-           ifelse(!is.na(prefix), 
-                  paste0(model, prefix), 
-                  model) 
-         ) %>%
-  select(-prefix) %>%
-  mutate(phenotype = gsub("\\.(f|i)$", "", phenotype)) %>%
-  filter(model != "addint.f") %>%
   separate(phenotype, into = c("ion", "tissue"), sep = "_") %>%
   mutate(tissue = factor(tissue,
                          levels = c("leaf", "seed", "ratio"))) %>%
@@ -1473,6 +1478,22 @@ map of QTL locations across chromosomes
 
 ```{r}
 
+model_line_scheme <- c("HUN" = "dotdash", "add" = "F1", "int" = "dotted", "WT" = "longdash",
+                       "addint.i" = "solid", "addint.f" = "twodash")
+
+phenotypes_color_scheme_df <- ion_pheno.col %>% 
+  separate(phenotype, into = c("ion", "tissue")) %>%
+  mutate(tissue = factor(tissue, levels = c("leaf", "seed", "ratio"))) %>%
+  arrange(ion, tissue) %>% 
+  mutate(phenotype = paste0(ion, "_", tissue)) %>%
+  mutate(color = parula(60)) %>%
+  mutate(phenotype = as_factor(phenotype))
+
+phenotypes_color_scheme <- phenotypes_color_scheme_df$color
+names(phenotypes_color_scheme) <- levels(phenotypes_color_scheme_df$phenotype)
+
+phen_cs <- scale_colour_manual(values = phenotypes_color_scheme, drop = T)
+
 chr_plot_base <- qtl_detected_all_lodplot %>%
   unnest(data) %>%
   mutate(chr = as_factor(chr)) %>%
@@ -1487,7 +1508,9 @@ chr_plot_base <- qtl_detected_all_lodplot %>%
 
 chr_plot_phenotypes_df <- qtl_detected_all_lodplot %>%
   unnest(data) %>%
+  ungroup %>%
   mutate(chr = as_factor(chr)) %>%
+  group_by(phenotype, model) %>%
   filter(lod == max(lod)) %>%
   select(chr, phenotype, pos, ci.low, ci.high, model) %>%
   ungroup %>%
@@ -1498,46 +1521,58 @@ chr_plot_phenotypes_df <- qtl_detected_all_lodplot %>%
   arrange(chr, desc(comp), phenotype) %>%
   group_by(chr, comp) %>%
   mutate(id2 = row_number()) %>%
-  mutate(x = as.double(chr) + 0.1 * comp * id2) %>%
+  mutate(x = as.double(chr) + 0.05 * comp * id2) %>%
   select(-c(id:id2)) %>%
   ungroup %>%
-  pivot_longer(contains("ci"))
-
-model_line_scheme <- c("")
-
+  pivot_longer(contains("ci")) %>%
+  mutate(phenotype = factor(phenotype, levels = levels(phenotypes_color_scheme_df$phenotype)))
 
 
-chr_plot_base +
+ion_chrom_plot <- chr_plot_base +
   geom_line(data = chr_plot_phenotypes_df, 
          aes(x = x, 
              y = value, 
              group = interaction(phenotype, model),
              color = phenotype,
              linetype = model),
-         size = 1.5)
+         size = 1.25) +
+  scale_linetype_manual(values = model_line_scheme) +
+  scale_color_manual(values = phenotypes_color_scheme, drop = T, breaks = chr_plot_phenotypes_df$phenotype %>% unique %>% sort) +
+  theme(panel.background = element_rect(fill = "white", colour ="grey50"),
+        plot.title = element_text(hjust = 0.5)) +
+  xlab(NULL) +
+  ylab("Genetic distance (cM)") +
+  ggtitle("QTLs detected with scanone in the analysis")
 
+dir.create(file.path(paste0(getwd(), "/output/plots"), "chrom_plot"))
 
-  pivot_longer(contains("ci")) %>%
-  distinct %>%
-  arrange(chr, pos) %>%
-  group_by(chr, phenotype) %>%
-  mutate(id = cur_group_id()) %>%
-  arrange(id) %>%
-  ungroup %>%
-  mutate(comp = ifelse(id %% 2 != 0, 1, -1),
-         comp = 0.25 * comp) %>%
-  group_by(chr, comp) %>%
-  mutate(id2 = cur_group_id()) %>%
-  ungroup %>%
-  arrange(chr, id2)
-
-  mutate(x = as.double(chr) + comp)
-
+ggsave(
+   filename ="output/plots/chrom_plot/chrom_plot_all.pdf", 
+   plot = ion_chrom_plot,
+   width = 15, height = 9
+)
 ```
 
 Effect plots for QTLs identified in scanone
 
 ```{r}
+
+cross_objects_df 
+
+qtl_detected_all %>% 
+  count(model) %>%
+  select(-n) 
+
+qtl_detected_all %>%
+  select(phenotype, chr, pos, model) %>%
+  arrange(chr, pos, phenotype)  %>%
+  mutate(crossobject = case_when(model == "HUN" ~ list(ion_crossobject_HUN),
+                                 model == "WT" ~ list(ion_crossobject_WT),
+                                 T ~ list(ion_crossobject))) %>%
+  
+  
+  
+
 
 
 
@@ -1554,7 +1589,7 @@ ion_qtl_overlaps <-join_overlap_self(ion_qtl_granges_example) %>%
 
 
 ion_qtl_overlaps
-
+-re
 
 
 
