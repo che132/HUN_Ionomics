@@ -21,6 +21,8 @@ library(googlesheets4)
 library(googledrive)
 library(qtl)
 library(broom)
+library(GenomicRanges)
+library(plyranges)
 
 # Set the seed as the same value as previous analysis
 set.seed(54955149)
@@ -1373,7 +1375,6 @@ ggsave(
 QTLs detected in all the separated analysis
 
 ```{r}
-
 # combine all scanone summaries
 qtl_detected_all <- bind_rows(
   scanone_summary_add_cov %>% mutate(model = "add"),
@@ -1381,8 +1382,7 @@ qtl_detected_all <- bind_rows(
   ions_interesting_qtl_addint %>% mutate(model = "addint"),
   scanone_summary_WT %>% mutate(model = "WT"),
   scanone_summary_HUN %>% mutate(model = "HUN")
-  ) %>%
-  select(-phenotype2)
+  ) 
 
 # Combine all information for plots
 qtl_detected_all_lodplot <- bind_rows(
@@ -1467,7 +1467,71 @@ ggsave(
    plot = gridExtra::marrangeGrob(p, nrow=1, ncol=1), 
    width = 15, height = 9
 )
+```
 
+map of QTL locations across chromosomes
+
+```{r}
+
+chr_plot_base <- qtl_detected_all_lodplot %>%
+  unnest(data) %>%
+  mutate(chr = as_factor(chr)) %>%
+  group_by(chr) %>%
+  summarise(min = min(pos),
+            max = max(pos)) %>%
+  pivot_longer(-chr) %>%
+  select(-name) %>%
+  ggplot(data =., aes(x = chr, y = value)) +
+  geom_line(size = 1.5) + 
+  scale_y_continuous(trans = "reverse")
+
+chr_plot_phenotypes_df <- qtl_detected_all_lodplot %>%
+  unnest(data) %>%
+  mutate(chr = as_factor(chr)) %>%
+  filter(lod == max(lod)) %>%
+  select(chr, phenotype, pos, ci.low, ci.high, model) %>%
+  ungroup %>%
+  arrange(chr, phenotype) %>%
+  group_by(chr) %>%
+  mutate(id = row_number()) %>%
+  mutate(comp = ifelse(id %% 2 != 0, 1, -1)) %>%
+  arrange(chr, desc(comp), phenotype) %>%
+  group_by(chr, comp) %>%
+  mutate(id2 = row_number()) %>%
+  mutate(x = as.double(chr) + 0.1 * comp * id2) %>%
+  select(-c(id:id2)) %>%
+  ungroup %>%
+  pivot_longer(contains("ci"))
+
+model_line_scheme <- c("")
+
+
+
+chr_plot_base +
+  geom_line(data = chr_plot_phenotypes_df, 
+         aes(x = x, 
+             y = value, 
+             group = interaction(phenotype, model),
+             color = phenotype,
+             linetype = model),
+         size = 1.5)
+
+
+  pivot_longer(contains("ci")) %>%
+  distinct %>%
+  arrange(chr, pos) %>%
+  group_by(chr, phenotype) %>%
+  mutate(id = cur_group_id()) %>%
+  arrange(id) %>%
+  ungroup %>%
+  mutate(comp = ifelse(id %% 2 != 0, 1, -1),
+         comp = 0.25 * comp) %>%
+  group_by(chr, comp) %>%
+  mutate(id2 = cur_group_id()) %>%
+  ungroup %>%
+  arrange(chr, id2)
+
+  mutate(x = as.double(chr) + comp)
 
 ```
 
@@ -1475,8 +1539,61 @@ Effect plots for QTLs identified in scanone
 
 ```{r}
 
-qtl_detected_all %>%
-  arrange(phenotype, chr)
+
+
+
+ion_qtl_granges_example <- qtl_detected_all %>%
+  select(seqnames = chr, start = ci.low, end = ci.high, phenotype) %>%
+  mutate(strand = "*") %>%
+  as_granges()
+
+ion_qtl_overlaps <-join_overlap_self(ion_qtl_granges_example) %>%
+  as_tibble %>%
+  distinct %>% 
+  filter(phenotype != phenotype.overlap)
+
+
+ion_qtl_overlaps
+
+
+
+
+
+exons_bed <- system.file("extdata", "exons.bed",
+                         package = "HelloRangesData")
+
+build <- system.file("extdata", "hg19.genome",
+                     package = "HelloRangesData") %>% 
+  read.delim(header = FALSE, col.names = c("seqnames", "width")) %>%
+  as_granges(start = 1) %>%
+  set_genome_info(genome = "hg19", seqlengths = width(.))
+
+exons <- read_bed(exons_bed, genome_info = build)
+
+cpg_bed <- system.file("extdata", "cpg.bed", package = "HelloRangesData")
+
+cpg <- read_bed(cpg_bed, genome_info = build)
+
+
+
+
+library(plyranges, quietly = TRUE)
+genes <- data.frame(seqnames = "VI", 
+                    start = c(3322, 3030, 1437,  5066, 6426, 836),
+                    end = c(3846, 3338, 2615, 5521, 7565, 1363),
+                    strand = c("-", "-", "-", "+", "+", "+"),
+                    gene_id=c("YFL064C", "YFL065C", "YFL066C", 
+                              "YFL063W", "YFL062W", "YFL067W"),
+                    gc = runif(6),
+                    score = rbinom(6, size = 3, p = 0.1),
+                    stringsAsFactors = FALSE)
+genes <- as_granges(genes)
+
+genes
+
+########### Genomic Ranges
+
+
 
 ```
 
