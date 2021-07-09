@@ -1562,10 +1562,9 @@ ggsave(
 )
 ```
 
-Effect plots for QTLs identified in scanone
+Effect plots for QTLs identified in HUN and WT models
 
 ```{r}
-
 genotypes_scheme_color <- c("CML312" = "#9a3a28", 
                             "HET" = "#581d2c",
                             "W22" = "#2e1342")
@@ -1692,8 +1691,15 @@ pdf("output/plots/effectplots/WT_effect_plots_all.pdf",
 walk(p2, ~ print(.x))
 dev.off()
 
+```
+
+Effect plots for QTLs identified in HUN and WT models
 
 
+```{r}
+
+
+# Effect plots forn add, int and adint models (hun cov interaction)
 ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
   filter(! model %in% c("WT", "HUN")) %>%
   mutate(ep = pmap(
@@ -1702,17 +1708,101 @@ ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
       list(...),
       effectplot(cross = crossobject, pheno.col = pheno.col, 
                  mname1 = "5@0", mname2 = qtl, draw = F))))
+  
+ion_effectplot_df_HUN_WT_ep <- ion_effectplot_df_HUN_WT %>%
+  select(model, phenotype, ion, chr, tissue, qtl, model, ep) %>%
+  mutate(pheno2 = paste0(ion, "_", tissue)) %>%
+  mutate(is.QTL = ifelse(phenotype == pheno2, TRUE, FALSE),
+         is.QTL = as.factor(is.QTL)) %>%
+  select(-c(pheno2)) %>%
+  mutate(ep_df = map( 
+    .x = ep,
+    .f = ~ map_df(.x =., .f = ~enframe(.x), .id = "what") %>%
+      mutate(name = str_extract(name, "[A-Z0-9]{1,}$")) %>%
+      pivot_wider(names_from = what, values_from = value) %>%
+      mutate(name = case_when(name == "CMLCML" ~ "CML312",
+                              name == "CMLW22" ~ "HET",
+                              name == "W22W22" ~ "W22",
+                              T ~ NA_character_)))) %>%
+  select(-ep) %>%
+  unnest(ep_df) 
+
+# Remove this object that's insanely heavy
+rm(ion_effectplot_df_HUN_WT)
+
+# effectplots 
+ion_effectplot_df_HUN_WT_ep_plots <- ion_effectplot_df_HUN_WT_ep %>%
+  mutate(title = paste("Effect plots for ", 
+                       phenotype, 
+                       "QTL in position", 
+                       qtl)) %>%
+  group_by(model, phenotype, chr, title) %>%
+  nest %>%
+  separate(phenotype, into = c("ion", NA), remove = F) %>%
+  mutate(plot = map2(
+    .x = data,
+    .y = title,
+    .f = ~ .x %>%
+      ggplot(data =., aes(x = name, y = Means, color = name))  +
+      geom_errorbar(aes(ymin = Means - SEs , ymax = Means + SEs),
+                    width = 0.2, 
+                    size = 1) +
+      geom_point(size = 2, shape = 22, fill = "white") +
+      scale_color_manual(name = "Genotype",
+                         values = genotypes_scheme_color) +
+      xlab(NULL) +
+      ylab("Concentration (ppm)") +
+      theme(
+        panel.background = element_rect(fill = "white", 
+                                        colour ="grey50"),
+        plot.title = element_text(hjust = 0.5)) +
+      facet_wrap(. ~ tissue + is.QTL, 
+                 scales = "free",
+                 labeller = ggplot2::labeller(tissue = label_value,
+                                              is.QTL = label_both)) +
+      ggtitle(.y))) %>%
+  group_by(model, ion, chr) %>%
+  summarise(plot = list(plot)) %>%
+  mutate(title = paste0("Ion: ", ion)) %>%
+  mutate(wrap = map2(
+    .x = plot, 
+    .y = title,
+    .f = ~ patchwork::wrap_plots(.x, guides = "collect", ncol = 1) +
+      patchwork::plot_annotation( 
+        title = .y,
+        theme = theme(plot.title = element_text(hjust = 0.5))))) %>%
+  ungroup
+
+p1 <- ion_effectplot_df_HUN_WT_ep_plots %>%
+  filter(model == "HUN") %>%
+  .$wrap
+
+p2 <- ion_effectplot_df_HUN_WT_ep_plots %>%
+  filter(model == "WT") %>%
+  .$wrap
+
+# # # create directory for plots
+# dir.create(file.path(paste0(getwd(), "/output/plots"), "effectplots"))
+
+# Saving plots into a single pdf
+pdf("output/plots/effectplots/HUN_effect_plots_all.pdf",
+    onefile = TRUE)
+walk(p1, ~ print(.x))
+dev.off()
+
+# Saving plots into a single pdf
+pdf("output/plots/effectplots/WT_effect_plots_all.pdf",
+    onefile = TRUE)
+walk(p2, ~ print(.x))
+dev.off()
 
 
 
 
+```
 
 
-
-
-
-
-
+```{r}
 ion_qtl_granges_example <- qtl_detected_all %>%
   select(seqnames = chr, start = ci.low, end = ci.high, phenotype) %>%
   mutate(strand = "*") %>%
