@@ -1565,8 +1565,8 @@ ggsave(
 Effect plots for QTLs identified in HUN and WT models
 
 ```{r}
-genotypes_scheme_color <- c("CML312" = "#9a3a28", 
-                            "HET" = "#581d2c",
+genotypes_scheme_color <- c("CML312" = "#e77e39", 
+                            "HET" = "#9a3a28",
                             "W22" = "#2e1342")
 
 ion_pheno.col2 <- ion_pheno.col %>%
@@ -1698,7 +1698,6 @@ Effect plots for QTLs identified in HUN and WT models
 
 ```{r}
 
-
 # Effect plots forn add, int and adint models (hun cov interaction)
 ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
   filter(! model %in% c("WT", "HUN")) %>%
@@ -1707,8 +1706,55 @@ ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
     .f = ~ with( 
       list(...),
       effectplot(cross = crossobject, pheno.col = pheno.col, 
-                 mname1 = "5@0", mname2 = qtl, draw = F))))
+                 mname1 = "5_2269274", mname2 = qtl, draw = F))))
   
+ion_effectplot_df_cov$ep %>%
+  .[[1]] %>%
+  map_df(.x =., .f = ~ as_tibble(.x, rownames = "hun"), .id = "what") %>%
+  pivot_longer(-c(what, hun)) %>%
+  pivot_wider(names_from = what, values_from = value) %>%
+  filter(!grepl("CMLW22", hun)) %>%
+  mutate(across(c(hun, name), ~ str_extract(., "[A-Z0-9]{1,}$"))) %>%
+  mutate(hun = ifelse(hun == "CMLCML", "WT", "HUN"),
+         name = case_when(name == "CMLCML" ~ "CML312",
+                          name == "CMLW22" ~ "HET",
+                          name == "W22W22" ~ "W22",
+                          T ~ NA_character_)) %>%
+  mutate(hun = factor(hun, levels = c("WT", "HUN"))) %>%
+  mutate(x = as.double(hun),
+         x = jitter(x, 0.1)) %>%
+  ggplot(data =.,
+         aes(x = hun,
+             y = Means, 
+             color = name,
+             fill = name,
+             group = name)) +
+  geom_errorbar(
+    aes(ymin = Means - SEs , 
+        ymax = Means + SEs),
+    width = 0.2, 
+    size = 1) +
+  geom_line(size = 1) +
+    geom_point(
+    size = 2, 
+    shape = 22, 
+    color = "black") +
+  scale_color_manual(
+    name = "Genotype",
+    values = genotypes_scheme_color) +
+  scale_fill_manual(
+    name = NULL,
+    guide = NULL,
+    values = genotypes_scheme_color) +
+  xlab(NULL) +
+  ylab("Concentration (ppm)") +
+  theme(panel.background = element_rect(fill = "white", 
+                                        colour ="grey50"),
+        plot.title = element_text(hjust = 0.5))
+  
+
+
+
 ion_effectplot_df_HUN_WT_ep <- ion_effectplot_df_HUN_WT %>%
   select(model, phenotype, ion, chr, tissue, qtl, model, ep) %>%
   mutate(pheno2 = paste0(ion, "_", tissue)) %>%
