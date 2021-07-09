@@ -1557,21 +1557,88 @@ Effect plots for QTLs identified in scanone
 
 ```{r}
 
-cross_objects_df 
+ion_pheno.col2 <- ion_pheno.col %>%
+  separate(phenotype, into = c("ion", "tissue"), remove = F)
 
-qtl_detected_all %>% 
-  count(model) %>%
-  select(-n) 
-
-qtl_detected_all %>%
+ion_effectplot_df_pre <- qtl_detected_all %>%
   select(phenotype, chr, pos, model) %>%
+  separate(phenotype, into = c("ion"), sep = "_", 
+           remove = F) %>%
+  distinct %>%
+  left_join(ion_pheno.col2 %>% select(-phenotype)) %>%
+  mutate(tissue = factor(tissue,
+                         levels = c("leaf", "seed", "ratio"))) %>%
+  separate(phenotype, into = c("phenotype", "sufix"), sep = "\\.") %>%
+  mutate(model = ifelse(!is.na(sufix),
+                        paste0(model, ".", sufix), model)) %>%
+  select(-c(sufix)) %>%
   arrange(chr, pos, phenotype)  %>%
-  mutate(crossobject = case_when(model == "HUN" ~ list(ion_crossobject_HUN),
-                                 model == "WT" ~ list(ion_crossobject_WT),
-                                 T ~ list(ion_crossobject))) %>%
+  left_join(ion_pheno.col) %>%
+  mutate(pos = round(pos, 1),
+         qtl = paste0(chr, "@", pos)) %>%
+  mutate(crossobject = case_when(
+    model == "HUN" ~ list(ion_crossobject_HUN),
+    model == "WT" ~ list(ion_crossobject_WT),
+    T ~ list(ion_crossobject))) 
+
+# Effect plots forn hun and wt (without hun cov interaction)
+ion_effectplot_df_HUN_WT <- ion_effectplot_df_pre %>%
+  filter(model %in% c("WT", "HUN")) %>%
+  mutate(ep = pmap(
+    .l = .,
+    .f = ~ with( 
+      list(...),
+      effectplot(cross = crossobject, pheno.col = pheno.col, 
+                 mname1 = qtl, draw = F))))
   
+genotypes_scheme_color <- c("CML312" = "#9a3a28", "HET" = "#581d2c",
+                            "W22" = "#2e1342")
+
+
+ion_effectplot_df_HUN_WT %>%
+  select(ion, tissue, qtl, model, ep) %>%
+  filter(ion == "S" & qtl == "1@51.5") %>%
+  mutate(ep_df = map( 
+    .x = ep,
+    .f = ~ map_df(.x =., .f = ~enframe(.x), .id = "what") %>%
+  mutate(name = str_extract(name, "[A-Z0-9]{1,}$")) %>%
+  pivot_wider(names_from = what, values_from = value) %>%
+  mutate(name = case_when(name == "CMLCML" ~ "CML312",
+                          name == "CMLW22" ~ "HET",
+                          name == "W22W22" ~ "W22",
+                          T ~ NA_character_)))) %>%
+  select(-ep) %>%
+  unnest(ep_df) %>%
+  ggplot(data =., aes(x = name, y = Means, color = name))  +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = Means - SEs , ymax = Means + SEs),
+                width = 0.2, size = 1) +
+  scale_color_manual(values = genotypes_scheme_color) +
+  xlab(NULL) +
+  ylab("Concentration (ppm)") +
+  theme(
+      panel.background = element_rect(fill = "white", 
+                                      colour ="grey50"),
+      plot.title = element_text(hjust = 0.5)
+      ) +
+  facet_wrap(.~tissue)
   
-  
+ 
+
+ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
+  filter(! model %in% c("WT", "HUN")) %>%
+  mutate(ep = pmap(
+    .l = .,
+    .f = ~ with( 
+      list(...),
+      effectplot(cross = crossobject, pheno.col = pheno.col, 
+                 mname1 = "5@0", mname2 = qtl, draw = F))))
+
+
+
+
+
+
 
 
 
