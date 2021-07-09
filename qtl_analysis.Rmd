@@ -22,6 +22,7 @@ library(googledrive)
 library(qtl)
 library(broom)
 library(GenomicRanges)
+library(pals)
 library(plyranges)
 
 # Set the seed as the same value as previous analysis
@@ -246,7 +247,6 @@ ionomics_phenotypes_raw <- phenotypes_url %>%
   select(id = GEN, hun = HUN, matches("seed|leaf"))
 
 #Importing the genetic map of the CML312xW22 HUN F2 mapping population
-
 gen_map <- gen_map_url %>%
   as_id %>%
   range_read(., na = "NA", col_types = "c") 
@@ -292,8 +292,8 @@ First Look at data.
 
 ```{r}
 # create directory for results
-dir.create(file.path(getwd(), "output"))
-dir.create(file.path(paste0(getwd(), "/output"), "tables"))
+# dir.create(file.path(getwd(), "output"))
+# dir.create(file.path(paste0(getwd(), "/output"), "tables"))
 
 # Compare distributions with kruskal-wallis test
 ion_tissue_kw <- ionomics_phenotypes %>%
@@ -314,13 +314,13 @@ ion_tissue_kw <- ionomics_phenotypes %>%
 write_csv(ion_tissue_kw,
           "output/tables/ion_tissue_kruskal_wallis_test.csv")
 
-# upload table to drive
-drive_upload(
-  media = "output/tables/ion_tissue_kruskal_wallis_test.csv",
-  path = output_tables_drive_id,
-  name = "ion_tissue_kruskal_wallis_test.csv",
-  type = "spreadsheet"
-  )
+# # upload table to drive
+# drive_upload(
+#   media = "output/tables/ion_tissue_kruskal_wallis_test.csv",
+#   path = output_tables_drive_id,
+#   name = "ion_tissue_kruskal_wallis_test.csv",
+#   type = "spreadsheet"
+#   )
 
 # Note: comparison of distributions using kruskal-wallis
 ionomics_raincloud_plots <- ionomics_phenotypes %>%
@@ -349,9 +349,9 @@ ionomics_raincloud_plots <- ionomics_phenotypes %>%
 
 p <- ionomics_raincloud_plots$wrap
 
-# create directory for plots
-dir.create(file.path(paste0(getwd(), "/output"), "plots"))
-dir.create(file.path(paste0(getwd(), "/output/plots"), "rainclowd_plots"))
+# # create directory for plots
+# dir.create(file.path(paste0(getwd(), "/output"), "plots"))
+# dir.create(file.path(paste0(getwd(), "/output/plots"), "rainclowd_plots"))
 
 # Saving plots into a single pdf
 pdf("output/plots/rainclowd_plots/ions_raincloud_plots.pdf",
@@ -359,13 +359,13 @@ pdf("output/plots/rainclowd_plots/ions_raincloud_plots.pdf",
 map(p, ~ print(.x))
 dev.off()
 
-#save raincloud plots to google drive
-drive_upload(
-  media = "output/plots/rainclowd_plots/ions_raincloud_plots.pdf",
-  path = output_plots_drive_id,
-  name = "ions_raincloud_plots.pdf",
-  type = "pdf"
-  )
+# #save raincloud plots to google drive
+# drive_upload(
+#   media = "output/plots/rainclowd_plots/ions_raincloud_plots.pdf",
+#   path = output_plots_drive_id,
+#   name = "ions_raincloud_plots.pdf",
+#   type = "pdf"
+#   )
 
 ```
 
@@ -410,20 +410,20 @@ crossobject_ion_hun <- gen_map %>%
   mutate(across(all_of(names(phenotypes_all)),
                 ~ ifelse(is.na(.) & row_number() < 3, "", .)))
 
-# create directory for the CrossObject
-dir.create(file.path(paste0(getwd(), "/output"), "crossobject"))
+# # create directory for the CrossObject
+# dir.create(file.path(paste0(getwd(), "/output"), "crossobject"))
 
 # save crossobject
 write_csv(crossobject_ion_hun,
           "output/crossobject/crossobject_ion_hun.csv")
 
-# upload crossobject to drive
-drive_upload(
-  media = "output/crossobject/crossobject_ion_hun.csv",
-  path = input_data_drive_id,
-  name = "crossobject_ion_hun.csv",
-  type = "spreadsheet"
-  )
+# # upload crossobject to drive
+# drive_upload(
+#   media = "output/crossobject/crossobject_ion_hun.csv",
+#   path = input_data_drive_id,
+#   name = "crossobject_ion_hun.csv",
+#   type = "spreadsheet"
+#   )
 ```
 
 QTL analysis
@@ -450,7 +450,7 @@ ion_crossobject <-  read.cross(
 ion_pheno.col <- ion_crossobject %>%
   phenames %>%
   enframe(name = "pheno.col", value = "phenotype") %>%
-  filter(row_number() > 2)
+  filter(row_number() > 2) 
   
 # Identifying covariate (hun genotype)
 hun_cov <- pull.geno(ion_crossobject, chr = 5) %>% .[,"5_2269274"]
@@ -460,14 +460,12 @@ hun_cov[hun_cov == 3] <- 0
 
 # Create directory to save the results
 
-dir.create(file.path(paste0(getwd(), "/output"), 
-                     "qtl_objects"))
-dir.create(file.path(paste0(getwd(), "/output/qtl_objects"),
-                     "scanone"))
-dir.create(file.path(paste0(getwd(), "/output/qtl_objects"),
-                     "permutations"))
-dir.create(file.path(paste0(getwd(), "/output/tables"),
-                     "scanone_summary"))
+# dir.create(file.path(paste0(getwd(), "/output"), "qtl_objects"))
+# dir.create(file.path(paste0(getwd(), "/output/qtl_objects"), "scanone"))
+# dir.create(file.path(paste0(getwd(), "/output/qtl_objects"),
+#                      "permutations"))
+# dir.create(file.path(paste0(getwd(), "/output/tables"),
+#                      "scanone_summary"))
 
 # calculate the genetic probabilities
 ion_crossobject <- calc.genoprob(
@@ -482,6 +480,7 @@ ion_crossobject <- sim.geno(
   step = 0.5, 
   error.prob = 0.001
   )
+
 ```
 
 QTL analysis with an additive covariate model
@@ -604,9 +603,9 @@ ion_add_cov_lodplots_all <- ion_add_cov_lodplot_df %>%
     )
   ) 
 
-# create directory for plots
-dir.create(file.path(paste0(getwd(), "/output/plots"),
-                     "scanone_lodplots"))
+# # create directory for plots
+# dir.create(file.path(paste0(getwd(), "/output/plots"),
+#                      "scanone_lodplots"))
 p <- ion_add_cov_lodplots_all$plot
 
 # Saving plots into a single pdf
@@ -683,6 +682,7 @@ save(
   file = "output/qtl_objects/scanone/ion_crossobject_intcov.out.hk.RData"
 )
 
+load("output/qtl_objects/scanone/ion_crossobject_intcov.out.hk.RData")
 # Permutation test
 ion_crossobject_intcov.operm <- 
   scanone(ion_crossobject, 
@@ -1478,12 +1478,14 @@ map of QTL locations across chromosomes
 
 ```{r}
 
-model_line_scheme <- c("HUN" = "dotdash", "add" = "F1", "int" = "dotted", "WT" = "longdash",
-                       "addint.i" = "solid", "addint.f" = "twodash")
+model_line_scheme <- c("HUN" = "dotdash", "add" = "F1", "int" = "dotted",
+                       "WT" = "longdash", "addint.i" = "solid",
+                       "addint.f" = "twodash")
 
 phenotypes_color_scheme_df <- ion_pheno.col %>% 
   separate(phenotype, into = c("ion", "tissue")) %>%
-  mutate(tissue = factor(tissue, levels = c("leaf", "seed", "ratio"))) %>%
+  mutate(tissue = factor(tissue, 
+                         levels = c("leaf", "seed", "ratio"))) %>%
   arrange(ion, tissue) %>% 
   mutate(phenotype = paste0(ion, "_", tissue)) %>%
   mutate(color = parula(60)) %>%
@@ -1492,7 +1494,8 @@ phenotypes_color_scheme_df <- ion_pheno.col %>%
 phenotypes_color_scheme <- phenotypes_color_scheme_df$color
 names(phenotypes_color_scheme) <- levels(phenotypes_color_scheme_df$phenotype)
 
-phen_cs <- scale_colour_manual(values = phenotypes_color_scheme, drop = T)
+phen_cs <- scale_colour_manual(values = phenotypes_color_scheme,
+                               drop = T)
 
 chr_plot_base <- qtl_detected_all_lodplot %>%
   unnest(data) %>%
@@ -1537,14 +1540,20 @@ ion_chrom_plot <- chr_plot_base +
              linetype = model),
          size = 1.25) +
   scale_linetype_manual(values = model_line_scheme) +
-  scale_color_manual(values = phenotypes_color_scheme, drop = T, breaks = chr_plot_phenotypes_df$phenotype %>% unique %>% sort) +
-  theme(panel.background = element_rect(fill = "white", colour ="grey50"),
+  scale_color_manual(values = phenotypes_color_scheme,
+                     drop = T, 
+                     breaks = chr_plot_phenotypes_df$phenotype %>% 
+                       unique %>% 
+                       sort) +
+  theme(panel.background = 
+          element_rect(fill = "white", 
+                       colour ="grey50"),
         plot.title = element_text(hjust = 0.5)) +
   xlab(NULL) +
   ylab("Genetic distance (cM)") +
   ggtitle("QTLs detected with scanone in the analysis")
 
-dir.create(file.path(paste0(getwd(), "/output/plots"), "chrom_plot"))
+# dir.create(file.path(paste0(getwd(), "/output/plots"), "chrom_plot"))
 
 ggsave(
    filename ="output/plots/chrom_plot/chrom_plot_all.pdf", 
@@ -1556,6 +1565,10 @@ ggsave(
 Effect plots for QTLs identified in scanone
 
 ```{r}
+
+genotypes_scheme_color <- c("CML312" = "#9a3a28", 
+                            "HET" = "#581d2c",
+                            "W22" = "#2e1342")
 
 ion_pheno.col2 <- ion_pheno.col %>%
   separate(phenotype, into = c("ion", "tissue"), remove = F)
@@ -1581,6 +1594,7 @@ ion_effectplot_df_pre <- qtl_detected_all %>%
     model == "WT" ~ list(ion_crossobject_WT),
     T ~ list(ion_crossobject))) 
 
+
 # Effect plots forn hun and wt (without hun cov interaction)
 ion_effectplot_df_HUN_WT <- ion_effectplot_df_pre %>%
   filter(model %in% c("WT", "HUN")) %>%
@@ -1591,39 +1605,94 @@ ion_effectplot_df_HUN_WT <- ion_effectplot_df_pre %>%
       effectplot(cross = crossobject, pheno.col = pheno.col, 
                  mname1 = qtl, draw = F))))
   
-genotypes_scheme_color <- c("CML312" = "#9a3a28", "HET" = "#581d2c",
-                            "W22" = "#2e1342")
-
-
-ion_effectplot_df_HUN_WT %>%
-  select(ion, tissue, qtl, model, ep) %>%
-  filter(ion == "S" & qtl == "1@51.5") %>%
+ion_effectplot_df_HUN_WT_ep <- ion_effectplot_df_HUN_WT %>%
+  select(model, phenotype, ion, chr, tissue, qtl, model, ep) %>%
+  mutate(pheno2 = paste0(ion, "_", tissue)) %>%
+  mutate(is.QTL = ifelse(phenotype == pheno2, TRUE, FALSE),
+         is.QTL = as.factor(is.QTL)) %>%
+  select(-c(pheno2)) %>%
   mutate(ep_df = map( 
     .x = ep,
     .f = ~ map_df(.x =., .f = ~enframe(.x), .id = "what") %>%
-  mutate(name = str_extract(name, "[A-Z0-9]{1,}$")) %>%
-  pivot_wider(names_from = what, values_from = value) %>%
-  mutate(name = case_when(name == "CMLCML" ~ "CML312",
-                          name == "CMLW22" ~ "HET",
-                          name == "W22W22" ~ "W22",
-                          T ~ NA_character_)))) %>%
+      mutate(name = str_extract(name, "[A-Z0-9]{1,}$")) %>%
+      pivot_wider(names_from = what, values_from = value) %>%
+      mutate(name = case_when(name == "CMLCML" ~ "CML312",
+                              name == "CMLW22" ~ "HET",
+                              name == "W22W22" ~ "W22",
+                              T ~ NA_character_)))) %>%
   select(-ep) %>%
-  unnest(ep_df) %>%
-  ggplot(data =., aes(x = name, y = Means, color = name))  +
-  geom_point(size = 2) +
-  geom_errorbar(aes(ymin = Means - SEs , ymax = Means + SEs),
-                width = 0.2, size = 1) +
-  scale_color_manual(values = genotypes_scheme_color) +
-  xlab(NULL) +
-  ylab("Concentration (ppm)") +
-  theme(
-      panel.background = element_rect(fill = "white", 
-                                      colour ="grey50"),
-      plot.title = element_text(hjust = 0.5)
-      ) +
-  facet_wrap(.~tissue)
-  
- 
+  unnest(ep_df) 
+
+# Remove this object that's insanely heavy
+rm(ion_effectplot_df_HUN_WT)
+
+# effectplots 
+ion_effectplot_df_HUN_WT_ep_plots <- ion_effectplot_df_HUN_WT_ep %>%
+  mutate(title = paste("Effect plots for ", 
+                       phenotype, 
+                       "QTL in position", 
+                       qtl)) %>%
+  group_by(model, phenotype, chr, title) %>%
+  nest %>%
+  separate(phenotype, into = c("ion", NA), remove = F) %>%
+  mutate(plot = map2(
+    .x = data,
+    .y = title,
+    .f = ~ .x %>%
+      ggplot(data =., aes(x = name, y = Means, color = name))  +
+      geom_errorbar(aes(ymin = Means - SEs , ymax = Means + SEs),
+                    width = 0.2, 
+                    size = 1) +
+      geom_point(size = 2, shape = 22, fill = "white") +
+      scale_color_manual(name = "Genotype",
+                         values = genotypes_scheme_color) +
+      xlab(NULL) +
+      ylab("Concentration (ppm)") +
+      theme(
+        panel.background = element_rect(fill = "white", 
+                                        colour ="grey50"),
+        plot.title = element_text(hjust = 0.5)) +
+      facet_wrap(. ~ tissue + is.QTL, 
+                 scales = "free",
+                 labeller = ggplot2::labeller(tissue = label_value,
+                                              is.QTL = label_both)) +
+      ggtitle(.y))) %>%
+  group_by(model, ion, chr) %>%
+  summarise(plot = list(plot)) %>%
+  mutate(title = paste0("Ion: ", ion)) %>%
+  mutate(wrap = map2(
+    .x = plot, 
+    .y = title,
+    .f = ~ patchwork::wrap_plots(.x, guides = "collect", ncol = 1) +
+      patchwork::plot_annotation( 
+        title = .y,
+        theme = theme(plot.title = element_text(hjust = 0.5))))) %>%
+  ungroup
+
+p1 <- ion_effectplot_df_HUN_WT_ep_plots %>%
+  filter(model == "HUN") %>%
+  .$wrap
+
+p2 <- ion_effectplot_df_HUN_WT_ep_plots %>%
+  filter(model == "WT") %>%
+  .$wrap
+
+# # # create directory for plots
+# dir.create(file.path(paste0(getwd(), "/output/plots"), "effectplots"))
+
+# Saving plots into a single pdf
+pdf("output/plots/effectplots/HUN_effect_plots_all.pdf",
+    onefile = TRUE)
+walk(p1, ~ print(.x))
+dev.off()
+
+# Saving plots into a single pdf
+pdf("output/plots/effectplots/WT_effect_plots_all.pdf",
+    onefile = TRUE)
+walk(p2, ~ print(.x))
+dev.off()
+
+
 
 ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
   filter(! model %in% c("WT", "HUN")) %>%
