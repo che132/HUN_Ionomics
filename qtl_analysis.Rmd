@@ -21,9 +21,8 @@ library(googlesheets4)
 library(googledrive)
 library(qtl)
 library(broom)
-library(GenomicRanges)
 library(pals)
-library(plyranges)
+
 
 # Set the seed as the same value as previous analysis
 set.seed(54955149)
@@ -227,6 +226,114 @@ lodplot_map_df <- function(SCANONE, PERMS, SUMMARY, ...) {
   return(f)
 }
 
+# transform MQM results in df to use to plot in ggplot2
+mapa_base_MQM <- function(SCANONE, TIBBLE) {
+  
+  escan <- eval(SCANONE) %>% 
+    as_tibble(., rownames = "marker") %>% 
+    rename(pos = `pos (cM)`) %>%
+    select(-info, - `LOD*info`) %>%
+    rename_at(.vars = vars(contains("LOD")), 
+              .funs = list(~ gsub("LOD ", "", .)))
+  
+  
+  summ <- TIBBLE %>%
+    select(trait, chr, ci.low, ci.high, treshold) %>%
+    rename(chr_sum = chr)
+  
+  mb <- escan %>%
+    select(1:3) %>%
+    mutate(chr = as.double(chr)) %>%
+    group_by(chr) %>%
+    nest() %>%
+    mutate(max = purrr::map_dbl(.x = data, .f = ~ max(.x$pos))) %>%
+    ungroup() %>%
+    mutate(comp = lag(cumsum(max)),
+           comp2 = (as.numeric(chr)-1)* 25) %>%
+    mutate(comp = ifelse(is.na(comp), 0, comp)) %>%
+    unnest(data) %>%
+    mutate(cM = pos + comp + comp2) %>%
+    select(-(max:comp2)) %>%
+    group_by(chr) %>% 
+    mutate(max = max(cM), 
+           min = min(cM), 
+           breaks = mean(cM), 
+           limit_low = min(cM),
+           limit_high= max(cM), 
+           inicio = head(cM, n = 1),
+           fin = tail(cM, n = 1)) %>% 
+    select(marker, chr, cM, pos, (breaks:fin)) %>%
+    left_join(., escan %>% select(-chr, -pos)) %>%
+    pivot_longer(names_to = "trait", values_to = "lod", cols = -(marker:fin)) %>%
+    ungroup()
+  
+  mb_2 <- mb %>%
+    left_join(., summ, by = c("trait" = "trait", "chr" = "chr_sum")) %>%
+    mutate(alpha = pmap_dbl(.l = .,
+                            .f = ~ case_when(is.na(..12) | is.na(..13) ~ 0,
+                                             between(..4, ..12, ..13) ~ 1,
+                                             T ~ 0)))
+  return(mb_2)
+}
+
+MQM_summary_to_tibble <- function(MQM_perms_df, CROSS, ...) {
+  
+  mqm_summ <- MQM_perms_df %>% 
+    mutate(sum = map2(.x = mqmscan, 
+                      .y = perms_2,
+                      .f = ~ summary(.x, 
+                                     perms = .y, 
+                                     alpha = 0.05, 
+                                     format = "tabByChr")))
+  summary <- mqm_summ %>%
+  select(sum, perms_2) %>%
+  mutate(treshold = purrr::map_dbl(.x = perms_2, 
+                                   .f = ~ summary(object = .x, alpha = 0.05) %>%
+                                     as.double(.) %>% 
+                                     round(., 2))) %>%
+  unnest(sum) %>% 
+  filter(!map_lgl(.x = sum, .f = ~ is.null(.x))) %>%  
+  mutate(tib = purrr::map(.x =sum, .f = ~ as_tibble(.x, rownames = "trait"))) %>%
+  unnest(tib) %>% 
+  select(-sum, -perms_2) %>%
+  separate(trait, into = c("trait", "marker"), sep = " : ") %>%
+  mutate(lodtype = ifelse(grepl("LOD\\*info", trait), "lod*info", "lod")) %>%
+  pivot_wider(names_from = lodtype, values_from = lod) %>%
+  mutate(`lod*info` = ifelse(is.na(`lod*info`), lead(`lod*info`), `lod*info`)) %>%
+  filter(! grepl("LOD\\*info", trait)) %>%
+  rename(pos = `pos (cM)`) %>%
+  mutate(trait = gsub("LOD ", "", trait),
+         marker = pmap_chr(.l = ., 
+                           .f = ~ ifelse(!grepl("^(\\d+)\\_", ..3),
+                                         find.marker(cross = CROSS, 
+                                                     chr = ..4, 
+                                                     pos = ..5),
+                                         ..2)),
+         p_pos = round(as.double(gsub("^(\\d+)\\_", "", marker))/1e6, 2),
+         p_pos_l = map2_dbl(.x = chr, .y = ci.low, 
+                            .f = ~ find.marker(cross = CROSS,
+                                               chr = .x,
+                                               pos = .y) %>%
+                              gsub("^(\\d+)\\_", "", .) %>% 
+                              as.double(.)/1e6) %>% 
+           round(.,2),
+         p_pos_h = map2_dbl(.x = chr, 
+                            .y = ci.high, 
+                            .f = ~ find.marker(cross = CROSS,
+                                               chr = .x, 
+                                               pos = .y) %>%
+                              gsub("^(\\d+)\\_", "", .) %>% 
+                              as.double(.)/1e6) %>% 
+           round(.,2),
+         interval = p_pos_h - p_pos_l) %>%
+    mutate(chr = as.double(chr)) %>%
+    arrange(chr) %>%
+    mutate(method = "MQM")
+  return(summary)
+}
+
+
+
 ```
 Importing data
 
@@ -380,7 +487,7 @@ phenotypes_ion <- ionomics_phenotypes %>%
   mutate(tissue = tolower(tissue)) %>%
   mutate(name = paste0(ion, "_", tissue)) %>%
   select(-c(ion, tissue)) %>%
-    pivot_wider(names_from = name, values_from = value)
+  pivot_wider(names_from = name, values_from = value)
 
 # ratio between leaf/seed
 phenotypes_ratio <- ionomics_phenotypes %>%
@@ -391,9 +498,20 @@ phenotypes_ratio <- ionomics_phenotypes %>%
   mutate(ion = paste0(ion, "_ratio")) %>%
   pivot_wider(names_from = ion, values_from = ratio)
 
+# mean between leaf/seed
+phenotypes_mean <- ionomics_phenotypes %>%
+  mutate(tissue = tolower(tissue)) %>%
+  pivot_wider(names_from = tissue, values_from = value) %>%
+  rowwise() %>%
+  mutate(mn = mean(c(leaf, seed))) %>%
+  select(-c(leaf:seed)) %>%
+  mutate(ion = paste0(ion, "_mean")) %>%
+  pivot_wider(names_from = ion, values_from = mn)
+
 # join all phenotypes
 phenotypes_all <- left_join(phenotypes_ion,
                             phenotypes_ratio) %>%
+  left_join(phenotypes_mean) %>%
   select(id, hun, sort(names(.)))
 
 # join all phenotypes with the genetic map and create the CrossObject
@@ -480,6 +598,168 @@ ion_crossobject <- sim.geno(
   step = 0.5, 
   error.prob = 0.001
   )
+```
+
+QTL analysis using MQM 
+
+```{r}
+
+MQM_ion_crossobject <-  read.cross(
+  format = "csv",
+  dir = "output/crossobject",
+  file = "crossobject_ion_hun.csv",
+  genotypes = c("AA", "AB", "BB"),
+  alleles = c("CML", "W22"),
+  estimate.map = F)
+
+# creating a pheno.col dataframe
+MQM_ion_pheno.col <- MQM_ion_crossobject %>%
+  phenames %>%
+  enframe(name = "pheno.col", value = "phenotype") %>%
+  filter(row_number() > 2) 
+
+# genotype imputation (augmentation)
+MQM_ion_hun_add <- mqmaugment(MQM_ion_hun_add, minprob = 0.1)
+
+# Set automatic cofactors across all genome (100)
+MQM_ion_hun_add_cofactors <- mqmautocofactors(MQM_ion_hun, 100)
+
+
+# Multiqtl scan using MQM
+MQM_ion_hun_add_scan <- MQM_ion_pheno.col %>%
+  mutate(
+    mqmscan = 
+      map(.x = pheno.col,
+          .f = ~ mqmscan(
+            cross = MQM_ion_hun_add, 
+            cofactors = MQM_ion_hun_add_cofactors,
+            pheno.col = .x, 
+            step.size = 1,
+            window.size = 25,
+            n.clusters = 4)))
+
+# Permutation test (1000 perms)
+MQM_ion_hun_add_scan_perms <- MQM_RIL_scan_perms
+
+MQM_ion_hun_add_scan_perms <- MQM_ion_hun_add_scan %>%
+  mutate(perms = purrr::map(
+    .x = pheno.col,
+    .f = ~ mqmpermutation(
+      cross = MQM_ion_hun_add, 
+      pheno.col = .x, 
+      method = "permutation",
+      n.cluster = 4,
+      n.perm = 1000,
+      verbose = F
+      )))
+
+# save scanone
+save(
+  list = c("ion_crossobject_intcov.out.hk"), 
+  file = "output/qtl_objects/scanone/MQM_ion_hun_add_scan_perms.RData"
+)
+
+MQM_ion_hun_add_scan_perms2 <- MQM_RIL_scan_perms %>%
+  mutate(perms_2 = purrr::map(.x = perms, .f = ~ mqmprocesspermutation(.x)))
+
+
+MQM_ion_hun_summary <- MQM_ion_hun_add_scan_perms2 %>%
+  MQM_summary_to_tibble(., CROSS = MQM_ion_hun_add) %>%
+  mutate(chr = as.character(chr)) %>%
+  mutate(marker = pmap_chr(
+    .l =.,
+    .f = ~ with(
+      list(...),
+      find.marker(
+        cross = ion_crossobject,
+        chr = chr, 
+        pos = pos
+      )))) %>%
+  mutate(p_pos = gsub("^\\d{1,2}_", "", marker) %>% as.integer,
+         p_pos = p_pos/1e6,
+         p_pos_l = ifelse(ci.low == 0, 0, p_pos_l)) %>%
+  select(-c(`lod*info`, method)) %>%
+  rename(phenotype = trait, p_ci.low = p_pos_l, p_ci.high = p_pos_h,
+         threshold = treshold)
+
+MQM_ion_hun_add_LOD_map <- MQM_RIL_scan_perms_2 %>%
+  mutate(
+    mapa = map(
+      .x = mqmscan,
+      .f = ~ mapa_base_MQM(
+        SCANONE = .x, 
+        TIBBLE = MQM_RIL_QTL_summary))) %>%
+  .$mapa %>%
+  Reduce(bind_rows, .)
+
+MQM_lodplot_function <- function(data_df, ion) {
+  
+  title <- paste0("Ion: ", ion)
+  
+  plot <- data_df %>% 
+    {
+      ggplot(data =., 
+             aes(x = cM, 
+                 y = lod, 
+                 group = interaction(chr), 
+                 alpha = alpha)) +
+        geom_line(size = 1) +
+        geom_line(aes(x = cM, 
+                      y = lod, 
+                      group = (chr)), 
+                  alpha = 0.15, 
+                  size = 1.5) +
+        geom_vline(xintercept = c(.$inicio, .$fin), 
+                   linetype = "dotted") +
+        geom_hline(aes(yintercept = treshold),
+                   linetype = "dotted", 
+                   size = 0.75, 
+                   alpha = 0.75) +
+        theme(panel.background = 
+                element_rect(
+                  fill = "white", 
+                  colour = "grey50")) +
+        scale_x_continuous(
+          name = "chr", 
+          breaks = unique(.$breaks), 
+          labels = unique(as.character((.$chr)))) +
+        scale_alpha_identity() + 
+        theme(legend.position = "top",
+              text = element_text(size = 12), 
+              plot.title = element_text(hjust = 0.5)) +
+        xlab(NULL) +
+        ylab("LOD") +
+        ggtitle(title) +
+        facet_grid(trait ~ .) 
+        
+    }
+  
+  return(plot)
+}
+
+MQM_ion_hun_add_lodplots <- MQM_ion_hun_add_LOD_map %>%
+  group_by(trait) %>%
+  nest %>%
+  separate(trait, into = c("ion", NA), remove = F) %>%
+  unnest(data) %>%
+  group_by(ion) %>%
+  nest %>%
+  mutate(plot = map2(.x = data,
+                     .y = ion, 
+                     .f = ~ MQM_lodplot_function(.x, .y))) 
+  
+p <- MQM_ion_hun_add_lodplots$plot
+
+# create directory for plots
+# dir.create(file.path(paste0(getwd(), "/output/plots"), "MQM_lodplots"))
+
+# Saving plots into a single pdf
+ggsave(
+  filename = 
+    "output/plots/MQM_lodplots/ion_MQM_lodplots.pdf", 
+  plot = gridExtra::marrangeGrob(p, nrow=1, ncol=1), 
+  width = 15, height = 9
+)
 
 ```
 
@@ -503,7 +783,7 @@ save(
   file = "output/qtl_objects/scanone/ion_crossobject_addcov.out.hk.RData"
 )
 
-load("output/qtl_objects/scanone/ion_crossobject_addcov.out.hk.RData")
+# load("output/qtl_objects/scanone/ion_crossobject_addcov.out.hk.RData")
 
 # Permutation test (1000 permutations)
 ion_crossobject_addcov.operm <- 
@@ -524,7 +804,7 @@ load("output/qtl_objects/permutations/ion_crossobject_addcov.operm.RData")
 # Summary, alpha = 0.05
 summary(
   ion_crossobject_addcov.out.hk,
-  perms = ion_crossobject_addcov.operm, alpha = c(0.1), 
+  perms = ion_crossobject_addcov.operm, alpha = c(0.05), 
   format= "tabByChr"
   ) 
 
@@ -631,7 +911,6 @@ ggsave(
 )
 
 # all significant plots in the same page
-
 ion_add_cov_lodplots_signif_single <- ion_add_cov_lodplots_signif %>%
   select(phenotype, data) %>%
   unnest(data) %>% {
@@ -705,7 +984,7 @@ load("output/qtl_objects/permutations/ion_crossobject_intcov.operm.RData")
 summary(
   ion_crossobject_intcov.out.hk, 
   perms = ion_crossobject_intcov.operm, 
-  alpha = c(0.05), 
+  alpha = c(0.1), 
   format= "tabByChr"
   )
 
@@ -811,9 +1090,7 @@ ggsave(
    width = 15, height = 9
 )
 
-
 # all significant plots in the same page
-
 ion_int_cov_lodplots_signif_single <- ion_int_cov_lodplots_signif %>%
   select(phenotype, data) %>%
   unnest(data) %>% {
@@ -1172,8 +1449,8 @@ ggsave(
 
 # all significant plots in the same page
 
-ion_WT_lodplots_signif <- ion_WT_lodplots_all %>%
-  semi_join(ion_WT_lodplots_signif) %>%
+ion_WT_lodplots_signif_single <- ion_WT_lodplots_all %>%
+  semi_join(scanone_summary_WT) %>%
   select(phenotype, data) %>%
   unnest(data) %>% {
     ggplot(data =., 
@@ -1195,8 +1472,8 @@ ion_WT_lodplots_signif <- ion_WT_lodplots_all %>%
 
 ggsave(
    filename =
-     "output/plots/scanone_lodplots/ion_WT_lodplots_signif.pdf", 
-   plot = ion_WT_lodplots_interesting, 
+     "output/plots/scanone_lodplots/ion_WT_lodplots_signif_single.pdf", 
+   plot = ion_WT_lodplots_signif_single, 
    width = 15, 
    height = 18
 )
@@ -1390,14 +1667,19 @@ qtl_detected_all <- bind_rows(
   scanone_summary_int_cov %>% mutate(model = "int"),
   ions_interesting_qtl_addint %>% mutate(model = "addint"),
   scanone_summary_WT %>% mutate(model = "WT"),
-  scanone_summary_HUN %>% mutate(model = "HUN")
+  scanone_summary_HUN %>% mutate(model = "HUN"),
+  MQM_ion_hun_summary  %>% mutate(model = "MQM")
   ) %>%
   separate(phenotype, into = c("phenotype", "sufix"), sep = "\\.") %>%
-  mutate(model = ifelse(!is.na(sufix), paste0(model, ".", sufix), model)) %>%
-  select(-c(sufix, phenotype2))
+  mutate(model = ifelse(!is.na(sufix), 
+                        paste0(model, ".", sufix), 
+                        model)) %>%
+  select(-c(sufix, phenotype2)) %>%
+  select(all_of(c(names(scanone_summary_add_cov), "model")))
 
 # Combine all information for plots
-qtl_detected_all_lodplot <- bind_rows(
+qtl_detected_all_lodplot <- 
+  bind_rows(
   ion_add_cov_lodplots_all %>% mutate(model = "add"),
   ion_int_cov_lodplots_all %>% mutate(model = "int"),
   ion_int_add_cov_lodplots_all %>% mutate(model = "addint"),
@@ -1406,7 +1688,9 @@ qtl_detected_all_lodplot <- bind_rows(
   ) %>%
   select(phenotype, data, model) %>%
   separate(phenotype, into = c("phenotype", "sufix"), sep = "\\.") %>%
-  mutate(model = ifelse(!is.na(sufix), paste0(model, ".", sufix), model)) %>%
+  mutate(model = ifelse(!is.na(sufix),
+                        paste0(model, ".", sufix),
+                        model)) %>%
   select(-sufix) %>%
   semi_join(qtl_detected_all) %>% distinct
 
@@ -1420,8 +1704,11 @@ model_color_scheme <-
 
 ion_lodplots_all_df <- qtl_detected_all_lodplot %>%
   separate(phenotype, into = c("ion", "tissue"), sep = "_") %>%
-  mutate(tissue = factor(tissue,
-                         levels = c("leaf", "seed", "ratio"))) %>%
+  mutate(
+    tissue = factor(
+      tissue,
+      levels = c("leaf", "seed", "ratio", "mean")
+      )) %>%
   unnest(data) %>%
   group_by(ion) %>%
   nest %>%
@@ -1480,81 +1767,105 @@ map of QTL locations across chromosomes
 
 model_line_scheme <- c("HUN" = "dotdash", "add" = "F1", "int" = "dotted",
                        "WT" = "longdash", "addint.i" = "solid",
-                       "addint.f" = "twodash")
+                       "addint.f" = "twodash", "MQM" = "12345678")
 
 phenotypes_color_scheme_df <- ion_pheno.col %>% 
   separate(phenotype, into = c("ion", "tissue")) %>%
-  mutate(tissue = factor(tissue, 
-                         levels = c("leaf", "seed", "ratio"))) %>%
+  mutate(tissue = factor(
+    tissue, 
+    levels = c("leaf", "seed", "ratio", "mean"
+               )
+    )) %>%
   arrange(ion, tissue) %>% 
   mutate(phenotype = paste0(ion, "_", tissue)) %>%
-  mutate(color = parula(60)) %>%
+  mutate(color = parula(80)) %>%
   mutate(phenotype = as_factor(phenotype))
 
 phenotypes_color_scheme <- phenotypes_color_scheme_df$color
-names(phenotypes_color_scheme) <- levels(phenotypes_color_scheme_df$phenotype)
 
-phen_cs <- scale_colour_manual(values = phenotypes_color_scheme,
-                               drop = T)
+names(phenotypes_color_scheme) <- levels(
+  phenotypes_color_scheme_df$phenotype
+  )
 
-chr_plot_base <- qtl_detected_all_lodplot %>%
+phen_cs <- scale_colour_manual(
+  values = phenotypes_color_scheme,
+  drop = T
+  )
+
+chr_plot_base_df <- qtl_detected_all_lodplot %>%
   unnest(data) %>%
-  mutate(chr = as_factor(chr)) %>%
+  select(chr, pos) %>%
   group_by(chr) %>%
   summarise(min = min(pos),
-            max = max(pos)) %>%
-  pivot_longer(-chr) %>%
-  select(-name) %>%
-  ggplot(data =., aes(x = chr, y = value)) +
-  geom_line(size = 1.5) + 
-  scale_y_continuous(trans = "reverse")
+            max = max(pos)) 
 
-chr_plot_phenotypes_df <- qtl_detected_all_lodplot %>%
-  unnest(data) %>%
-  ungroup %>%
-  mutate(chr = as_factor(chr)) %>%
-  group_by(phenotype, model) %>%
-  filter(lod == max(lod)) %>%
-  select(chr, phenotype, pos, ci.low, ci.high, model) %>%
-  ungroup %>%
+chr_plot_phenotypes_df <- qtl_detected_all %>%
   arrange(chr, phenotype) %>%
+  select(chr, phenotype, pos, ci.low, ci.high, model) %>%
+  mutate(chr = as.integer(chr)) %>%
+  arrange(chr) %>%
   group_by(chr) %>%
   mutate(id = row_number()) %>%
   mutate(comp = ifelse(id %% 2 != 0, 1, -1)) %>%
   arrange(chr, desc(comp), phenotype) %>%
   group_by(chr, comp) %>%
   mutate(id2 = row_number()) %>%
-  mutate(x = as.double(chr) + 0.05 * comp * id2) %>%
+  mutate(x = 1 + 0.05 * comp * id2) %>%
+  group_by(chr) %>%
+  filter(x != chr) %>%
   select(-c(id:id2)) %>%
   ungroup %>%
   pivot_longer(contains("ci")) %>%
-  mutate(phenotype = factor(phenotype, levels = levels(phenotypes_color_scheme_df$phenotype)))
+  mutate(
+    phenotype = factor(
+      phenotype, 
+      levels = levels(phenotypes_color_scheme_df$phenotype)
+      ))
 
-
-ion_chrom_plot <- chr_plot_base +
-  geom_line(data = chr_plot_phenotypes_df, 
-         aes(x = x, 
-             y = value, 
-             group = interaction(phenotype, model),
-             color = phenotype,
-             linetype = model),
-         size = 1.25) +
-  scale_linetype_manual(values = model_line_scheme) +
-  scale_color_manual(values = phenotypes_color_scheme,
-                     drop = T, 
-                     breaks = chr_plot_phenotypes_df$phenotype %>% 
-                       unique %>% 
-                       sort) +
-  theme(panel.background = 
-          element_rect(fill = "white", 
-                       colour ="grey50"),
-        plot.title = element_text(hjust = 0.5)) +
+ion_chrom_plot <- chr_plot_phenotypes_df %>%
+  left_join(chr_plot_base_df) %>%
+  mutate(chr = factor(chr, levels = c(1:10))) %>%
+  pivot_longer(
+    c(min, max),
+      names_to = "dist", values_to ="dist_value") %>%
+  ggplot() +
+    geom_line(
+      aes(
+        x = chr, 
+        y = dist_value), 
+      size = 1.25) +
+    geom_line(
+      aes(
+        x = x, 
+        y = value, 
+        group = interaction(chr, phenotype, model),
+        color = phenotype,
+        linetype = model),
+      size = 1
+         ) +
+    scale_y_continuous(trans = "reverse") +
+    scale_linetype_manual(values = model_line_scheme) +
+    scale_color_manual(
+      values = phenotypes_color_scheme,
+      drop = T, 
+      breaks = chr_plot_phenotypes_df$phenotype %>% 
+        unique %>% 
+        sort
+      ) +
+    theme(
+      panel.background = 
+          element_rect(
+            fill = "white", 
+            colour ="grey50"),
+      plot.title = element_text(hjust = 0.5),
+      legend.position = "top"
+      ) +
   xlab(NULL) +
-  ylab("Genetic distance (cM)") +
-  ggtitle("QTLs detected with scanone in the analysis")
+  facet_grid(. ~ chr, scales = "free_x") +
+  ggtitle("QTLs detected with scanone in the analysis") + 
+  guides(col = guide_legend(ncol = 10))
 
 # dir.create(file.path(paste0(getwd(), "/output/plots"), "chrom_plot"))
-
 ggsave(
    filename ="output/plots/chrom_plot/chrom_plot_all.pdf", 
    plot = ion_chrom_plot,
@@ -1578,11 +1889,13 @@ ion_effectplot_df_pre <- qtl_detected_all %>%
            remove = F) %>%
   distinct %>%
   left_join(ion_pheno.col2 %>% select(-phenotype)) %>%
-  mutate(tissue = factor(tissue,
-                         levels = c("leaf", "seed", "ratio"))) %>%
+  mutate(tissue = factor(
+    tissue,
+    levels = c("leaf", "seed", "ratio", "mean"))) %>%
   separate(phenotype, into = c("phenotype", "sufix"), sep = "\\.") %>%
   mutate(model = ifelse(!is.na(sufix),
-                        paste0(model, ".", sufix), model)) %>%
+                        paste0(model, ".", sufix), 
+                        model)) %>%
   select(-c(sufix)) %>%
   arrange(chr, pos, phenotype)  %>%
   left_join(ion_pheno.col) %>%
@@ -1594,9 +1907,9 @@ ion_effectplot_df_pre <- qtl_detected_all %>%
     T ~ list(ion_crossobject))) 
 
 
-# Effect plots forn hun and wt (without hun cov interaction)
+# Effect plots forn hun, wt and MQM (without hun cov interaction)
 ion_effectplot_df_HUN_WT <- ion_effectplot_df_pre %>%
-  filter(model %in% c("WT", "HUN")) %>%
+  filter(model %in% c("WT", "HUN", "MQM")) %>%
   mutate(ep = pmap(
     .l = .,
     .f = ~ with( 
@@ -1650,9 +1963,11 @@ ion_effectplot_df_HUN_WT_ep_plots <- ion_effectplot_df_HUN_WT_ep %>%
       theme(
         panel.background = element_rect(fill = "white", 
                                         colour ="grey50"),
-        plot.title = element_text(hjust = 0.5)) +
+        plot.title = element_text(hjust = 0.5),
+        text = element_text(size=20)) +
       facet_wrap(. ~ tissue + is.QTL, 
-                 scales = "free",
+                 nrow = 1,
+                 scales = "free_y",
                  labeller = ggplot2::labeller(tissue = label_value,
                                               is.QTL = label_both)) +
       ggtitle(.y))) %>%
@@ -1676,31 +1991,43 @@ p2 <- ion_effectplot_df_HUN_WT_ep_plots %>%
   filter(model == "WT") %>%
   .$wrap
 
+p3 <- ion_effectplot_df_HUN_WT_ep_plots %>%
+  filter(model == "MQM") %>%
+  .$wrap
+
+
 # # # create directory for plots
 # dir.create(file.path(paste0(getwd(), "/output/plots"), "effectplots"))
 
 # Saving plots into a single pdf
 pdf("output/plots/effectplots/HUN_effect_plots_all.pdf",
-    onefile = TRUE)
+    onefile = TRUE,  width = 15, height = 9)
 walk(p1, ~ print(.x))
 dev.off()
 
 # Saving plots into a single pdf
 pdf("output/plots/effectplots/WT_effect_plots_all.pdf",
-    onefile = TRUE)
+    onefile = TRUE,  width = 15, height = 9)
 walk(p2, ~ print(.x))
 dev.off()
 
+# Saving plots into a single pdf
+pdf("output/plots/effectplots/MQM_effect_plots_all.pdf",
+    onefile = TRUE,  width = 15, height = 9)
+walk(p3, ~ print(.x))
+dev.off()
+
+
 ```
 
-Effect plots for QTLs identified in HUN and WT models
+Effect plots for QTLs identified in add and int models
 
 
 ```{r}
 
 # Effect plots forn add, int and adint models (hun cov interaction)
 ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
-  filter(! model %in% c("WT", "HUN")) %>%
+  filter(! model %in% c("WT", "HUN", "MQM")) %>%
   mutate(ep = pmap(
     .l = .,
     .f = ~ with( 
@@ -1710,10 +2037,13 @@ ion_effectplot_df_cov <- ion_effectplot_df_pre %>%
   
 ion_effectplot_df_cov2 <- ion_effectplot_df_cov %>%
   select(-crossobject) %>%
-  mutate(epdf = 
-           map(.x = 
-                 ep,
-               .f = ~ map_df(.x =., .f = ~ as_tibble(.x, rownames = "hun"), .id = "what") %>%
+  mutate(
+    epdf = map(
+      .x = ep,
+      .f = ~ map_df(
+        .x =., 
+        .f = ~ as_tibble(.x, rownames = "hun"), 
+        .id = "what") %>%
   pivot_longer(-c(what, hun)) %>%
   pivot_wider(names_from = what, values_from = value) %>%
   filter(!grepl("CMLW22", hun)) %>%
@@ -1723,70 +2053,71 @@ ion_effectplot_df_cov2 <- ion_effectplot_df_cov %>%
                           name == "CMLW22" ~ "HET",
                           name == "W22W22" ~ "W22",
                           T ~ NA_character_)) %>%
-  mutate(hun = factor(hun, levels = c("WT", "HUN")))))
+  mutate(hun = factor(hun, levels = c("WT", "HUN"))))) 
 
-rm(ion_effectplot_df_cov)
-
-  mutate(x = as.double(hun),
-         x = jitter(x, 0.1))
-                    ))
-
-   %>%
-  ggplot(data =.,
-         aes(x = hun,
-             y = Means, 
-             color = name,
-             fill = name,
-             group = name)) +
+cov_effecplots_function <- function(data, title) {
+  
+  PLOT <- data %>%
+    ggplot(
+    data =., 
+    aes(x = hun, 
+        y = Means,
+        group =  name,
+        color = name
+        )
+    ) +
   geom_errorbar(
-    aes(ymin = Means - SEs , 
-        ymax = Means + SEs),
+    aes(
+      ymin = Means - SEs,
+      ymax = Means + SEs
+      ),
     width = 0.2, 
-    size = 1) +
-  geom_line(size = 1) +
-    geom_point(
+    size = 1
+    ) +
+  geom_line(
+    size = 1
+    ) +
+  geom_point(
     size = 2, 
     shape = 22, 
-    color = "black") +
+    fill = "white"
+    ) +
   scale_color_manual(
     name = "Genotype",
-    values = genotypes_scheme_color) +
-  scale_fill_manual(
-    name = NULL,
-    guide = NULL,
-    values = genotypes_scheme_color) +
+    values = genotypes_scheme_color
+    ) +
   xlab(NULL) +
   ylab("Concentration (ppm)") +
-  theme(panel.background = element_rect(fill = "white", 
-                                        colour ="grey50"),
-        plot.title = element_text(hjust = 0.5))
+  theme(
+        panel.background = element_rect(
+          fill = "white", 
+          colour ="grey50"
+          ),
+        plot.title = element_text(hjust = 0.5),
+        text = element_text(size=20)
+        ) +
+      facet_wrap(
+        . ~ tissue + is.QTL,
+        nrow = 1,
+        scales = "free_y",
+        labeller = ggplot2::labeller(tissue = label_value,
+                                     is.QTL = label_both
+                                     )
+        ) +
+    ggtitle(title)
   
+  return(PLOT)
 
+  
+}
 
-
-ion_effectplot_df_HUN_WT_ep <- ion_effectplot_df_HUN_WT %>%
-  select(model, phenotype, ion, chr, tissue, qtl, model, ep) %>%
-  mutate(pheno2 = paste0(ion, "_", tissue)) %>%♪
+ion_effectplot_df_cov_ep_plots <- ion_effectplot_df_cov2 %>%
+  select(model, phenotype, ion, chr, tissue, qtl, model, epdf) %>%
+  mutate(pheno2 = paste0(ion, "_", tissue)) %>%
   mutate(is.QTL = ifelse(phenotype == pheno2, TRUE, FALSE),
          is.QTL = as.factor(is.QTL)) %>%
   select(-c(pheno2)) %>%
-  mutate(ep_df = map( 
-    .x = ep,
-    .f = ~ map_df(.x =., .f = ~enframe(.x), .id = "what") %>%
-      mutate(name = str_extract(name, "[A-Z0-9]{1,}$")) %>%
-      pivot_wider(names_from = what, values_from = value) %>%
-      mutate(name = case_when(name == "CMLCML" ~ "CML312",
-                              name == "CMLW22" ~ "HET",
-                              name == "W22W22" ~ "W22",
-                              T ~ NA_character_)))) %>%
-  select(-ep) %>%
-  unnest(ep_df) 
-
-# Remove this object that's insanely heavy
-rm(ion_effectplot_df_HUN_WT)
-
-# effectplots 
-ion_effectplot_df_HUN_WT_ep_plots <- ion_effectplot_df_HUN_WT_ep %>%
+  unnest(epdf) %>%
   mutate(title = paste("Effect plots for ", 
                        phenotype, 
                        "QTL in position", 
@@ -1797,25 +2128,8 @@ ion_effectplot_df_HUN_WT_ep_plots <- ion_effectplot_df_HUN_WT_ep %>%
   mutate(plot = map2(
     .x = data,
     .y = title,
-    .f = ~ .x %>%
-      ggplot(data =., aes(x = name, y = Means, color = name))  +
-      geom_errorbar(aes(ymin = Means - SEs , ymax = Means + SEs),
-                    width = 0.2, 
-                    size = 1) +
-      geom_point(size = 2, shape = 22, fill = "white") +
-      scale_color_manual(name = "Genotype",
-                         values = genotypes_scheme_color) +
-      xlab(NULL) +
-      ylab("Concentration (ppm)") +
-      theme(
-        panel.background = element_rect(fill = "white", 
-                                        colour ="grey50"),
-        plot.title = element_text(hjust = 0.5)) +
-      facet_wrap(. ~ tissue + is.QTL, 
-                 scales = "free",
-                 labeller = ggplot2::labeller(tissue = label_value,
-                                              is.QTL = label_both)) +
-      ggtitle(.y))) %>%
+    .f = ~ cov_effecplots_function(.x, .y)
+    )) %>%
   group_by(model, ion, chr) %>%
   summarise(plot = list(plot)) %>%
   mutate(title = paste0("Ion: ", ion)) %>%
@@ -1826,36 +2140,47 @@ ion_effectplot_df_HUN_WT_ep_plots <- ion_effectplot_df_HUN_WT_ep %>%
       patchwork::plot_annotation( 
         title = .y,
         theme = theme(plot.title = element_text(hjust = 0.5))))) %>%
-  ungroup
+  ungroup 
+  
 
-p1 <- ion_effectplot_df_HUN_WT_ep_plots %>%
-  filter(model == "HUN") %>%
+p1 <- ion_effectplot_df_cov_ep_plots %>%
+  filter(model == "add") %>%
   .$wrap
 
-p2 <- ion_effectplot_df_HUN_WT_ep_plots %>%
-  filter(model == "WT") %>%
+p2 <- ion_effectplot_df_cov_ep_plots %>%
+  filter(model %in% c("addint.f", "addint.i")) %>%
   .$wrap
+
+p3 <- ion_effectplot_df_cov_ep_plots %>%
+  filter(model == "int") %>%
+  .$wrap
+
 
 # # # create directory for plots
 # dir.create(file.path(paste0(getwd(), "/output/plots"), "effectplots"))
 
 # Saving plots into a single pdf
-pdf("output/plots/effectplots/HUN_effect_plots_all.pdf",
-    onefile = TRUE)
+pdf("output/plots/effectplots/add_effect_plots_all.pdf",
+    onefile = TRUE,  width = 15, height = 9)
 walk(p1, ~ print(.x))
 dev.off()
 
 # Saving plots into a single pdf
-pdf("output/plots/effectplots/WT_effect_plots_all.pdf",
-    onefile = TRUE)
+pdf("output/plots/effectplots/addint_effect_plots_all.pdf",
+    onefile = TRUE,  width = 15, height = 9)
 walk(p2, ~ print(.x))
 dev.off()
 
-
+# Saving plots into a single pdf
+pdf("output/plots/effectplots/int_effect_plots_all.pdf",
+    onefile = TRUE,  width = 15, height = 9)
+walk(p3, ~ print(.x))
+dev.off()
 
 
 ```
 
+MQM_ion_hun_summary
 
 ```{r}
 ion_qtl_granges_example <- qtl_detected_all %>%
@@ -1910,6 +2235,20 @@ genes
 ########### Genomic Ranges
 
 
+
+```
+
+MQM_ion_hun_summary
+
+
+```{r}
+
+MQM_ion_hun_summary %>%
+  filter(chr == 5) %>%
+  filter(between(pos, 0, 5)) 
+
+qtl_detected_all %>%
+  filter(chr == 5)
 
 ```
 
