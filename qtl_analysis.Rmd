@@ -283,12 +283,12 @@ MQM_summary_to_tibble <- function(MQM_perms_df, CROSS, ...) {
                       .y = perms_2,
                       .f = ~ summary(.x, 
                                      perms = .y, 
-                                     alpha = 0.05, 
+                                     alpha = 0.1, 
                                      format = "tabByChr")))
   summary <- mqm_summ %>%
   select(sum, perms_2) %>%
   mutate(treshold = purrr::map_dbl(.x = perms_2, 
-                                   .f = ~ summary(object = .x, alpha = 0.05) %>%
+                                   .f = ~ summary(object = .x, alpha = 0.1) %>%
                                      as.double(.) %>% 
                                      round(., 2))) %>%
   unnest(sum) %>% 
@@ -331,9 +331,6 @@ MQM_summary_to_tibble <- function(MQM_perms_df, CROSS, ...) {
     mutate(method = "MQM")
   return(summary)
 }
-
-
-
 ```
 Importing data
 
@@ -474,6 +471,8 @@ dev.off()
 #   type = "pdf"
 #   )
 
+
+
 ```
 
 Create CrossObject
@@ -498,10 +497,13 @@ phenotypes_ratio <- ionomics_phenotypes %>%
   mutate(ion = paste0(ion, "_ratio")) %>%
   pivot_wider(names_from = ion, values_from = ratio)
 
-# mean between leaf/seed
+# mean between leaf/seed note: standardized using scale function
 phenotypes_mean <- ionomics_phenotypes %>%
   mutate(tissue = tolower(tissue)) %>%
   pivot_wider(names_from = tissue, values_from = value) %>%
+  arrange(ion, id) %>%
+  group_by(ion) %>%
+  mutate(across(c(leaf, seed), ~ scale(.))) %>%
   rowwise() %>%
   mutate(mn = mean(c(leaf, seed))) %>%
   select(-c(leaf:seed)) %>%
@@ -619,33 +621,30 @@ MQM_ion_pheno.col <- MQM_ion_crossobject %>%
   filter(row_number() > 2) 
 
 # genotype imputation (augmentation)
-MQM_ion_hun_add <- mqmaugment(MQM_ion_hun_add, minprob = 0.1)
+MQM_ion <- mqmaugment(MQM_ion_crossobject, minprob = 0.1)
 
 # Set automatic cofactors across all genome (100)
-MQM_ion_hun_add_cofactors <- mqmautocofactors(MQM_ion_hun, 100)
-
+MQM_ion_cofactors <- mqmautocofactors(MQM_ion, 100)
 
 # Multiqtl scan using MQM
-MQM_ion_hun_add_scan <- MQM_ion_pheno.col %>%
+MQM_ion_scan <- MQM_ion_pheno.col %>%
   mutate(
     mqmscan = 
       map(.x = pheno.col,
           .f = ~ mqmscan(
-            cross = MQM_ion_hun_add, 
-            cofactors = MQM_ion_hun_add_cofactors,
+            cross = MQM_ion, 
+            cofactors = MQM_ion_cofactors,
             pheno.col = .x, 
             step.size = 1,
             window.size = 25,
             n.clusters = 4)))
 
 # Permutation test (1000 perms)
-MQM_ion_hun_add_scan_perms <- MQM_RIL_scan_perms
-
-MQM_ion_hun_add_scan_perms <- MQM_ion_hun_add_scan %>%
+MQM_ion_scan_perms <- MQM_ion_scan %>%
   mutate(perms = purrr::map(
     .x = pheno.col,
     .f = ~ mqmpermutation(
-      cross = MQM_ion_hun_add, 
+      cross = MQM_ion, 
       pheno.col = .x, 
       method = "permutation",
       n.cluster = 4,
@@ -659,11 +658,11 @@ save(
   file = "output/qtl_objects/scanone/MQM_ion_hun_add_scan_perms.RData"
 )
 
-MQM_ion_hun_add_scan_perms2 <- MQM_RIL_scan_perms %>%
+MQM_ion_scan_perms2 <- MQM_ion_scan_perms %>%
   mutate(perms_2 = purrr::map(.x = perms, .f = ~ mqmprocesspermutation(.x)))
 
 
-MQM_ion_hun_summary <- MQM_ion_hun_add_scan_perms2 %>%
+MQM_ion_hun_summary <- MQM_ion_scan_perms2 %>%
   MQM_summary_to_tibble(., CROSS = MQM_ion_hun_add) %>%
   mutate(chr = as.character(chr)) %>%
   mutate(marker = pmap_chr(
@@ -679,16 +678,18 @@ MQM_ion_hun_summary <- MQM_ion_hun_add_scan_perms2 %>%
          p_pos = p_pos/1e6,
          p_pos_l = ifelse(ci.low == 0, 0, p_pos_l)) %>%
   select(-c(`lod*info`, method)) %>%
-  rename(phenotype = trait, p_ci.low = p_pos_l, p_ci.high = p_pos_h,
-         threshold = treshold)
+  rename(p_ci.low = p_pos_l, p_ci.high = p_pos_h,
+         treshold = treshold) %>%
+  unnest(lod) %>%
+  mutate(chr = as.integer(chr))
 
-MQM_ion_hun_add_LOD_map <- MQM_RIL_scan_perms_2 %>%
+MQM_ion_LOD_map <- MQM_ion_scan_perms2 %>%
   mutate(
     mapa = map(
       .x = mqmscan,
       .f = ~ mapa_base_MQM(
         SCANONE = .x, 
-        TIBBLE = MQM_RIL_QTL_summary))) %>%
+        TIBBLE = MQM_ion_hun_summary))) %>%
   .$mapa %>%
   Reduce(bind_rows, .)
 
@@ -730,14 +731,14 @@ MQM_lodplot_function <- function(data_df, ion) {
         xlab(NULL) +
         ylab("LOD") +
         ggtitle(title) +
-        facet_grid(trait ~ .) 
+        facet_grid(trait ~ ., scales = "free_y") 
         
     }
   
   return(plot)
 }
 
-MQM_ion_hun_add_lodplots <- MQM_ion_hun_add_LOD_map %>%
+MQM_ion_hun_add_lodplots <- MQM_ion_LOD_map %>%
   group_by(trait) %>%
   nest %>%
   separate(trait, into = c("ion", NA), remove = F) %>%
@@ -961,7 +962,7 @@ save(
   file = "output/qtl_objects/scanone/ion_crossobject_intcov.out.hk.RData"
 )
 
-load("output/qtl_objects/scanone/ion_crossobject_intcov.out.hk.RData")
+# load("output/qtl_objects/scanone/ion_crossobject_intcov.out.hk.RData")
 # Permutation test
 ion_crossobject_intcov.operm <- 
   scanone(ion_crossobject, 
