@@ -658,7 +658,13 @@ save(
   file = "output/qtl_objects/scanone/MQM_ion_hun_add_scan_perms.RData"
 )
 
+<<<<<<< HEAD
 MQM_ion_scan_perms2 <- MQM_ion_scan_perms %>%
+=======
+load("output/qtl_objects/scanone/MQM_ion_hun_add_scan_perms.RData")
+
+MQM_ion_hun_add_scan_perms2 <- MQM_ion_hun_add_scan_perms %>%
+>>>>>>> cf49913e98ab0965feec295ca504befc883349b6
   mutate(perms_2 = purrr::map(.x = perms, .f = ~ mqmprocesspermutation(.x)))
 
 
@@ -2023,7 +2029,6 @@ dev.off()
 
 Effect plots for QTLs identified in add and int models
 
-
 ```{r}
 
 # Effect plots forn add, int and adint models (hun cov interaction)
@@ -2181,75 +2186,265 @@ dev.off()
 
 ```
 
-MQM_ion_hun_summary
+genomic ranges
 
 ```{r}
+
 ion_qtl_granges_example <- qtl_detected_all %>%
-  select(seqnames = chr, start = ci.low, end = ci.high, phenotype) %>%
+  select(seqnames = chr, 
+         start = ci.low, 
+         end = ci.high,
+         phenotype, model) %>%
+  arrange(seqnames, start) %>%
+  mutate(meta = paste0(phenotype, "-", model)) %>%
+  select(-c(phenotype, model)) %>%
   mutate(strand = "*") %>%
   as_granges()
 
-ion_qtl_overlaps <-join_overlap_self(ion_qtl_granges_example) %>%
+g <- ion_qtl_granges_example
+
+g %>%
+  disjoin() %>%
+  reduce
+
+g[is.na(
+  findOverlaps( 
+    g, 
+    drop.self = TRUE,
+    drop.redundant = T,
+    select = "arbitrary"
+    ))] %>%
   as_tibble %>%
-  distinct %>% 
-  filter(phenotype != phenotype.overlap)
+  mutate(seqnames = as.integer(seqnames))
 
+ion_qtl_granges_example %>%
+  reduce %>%
+  as_tibble
 
-ion_qtl_overlaps
--re
+ion_overlaps <- findOverlaps(
+  ion_qtl_granges_example, 
+  drop.self = F, 
+  drop.redundant = TRUE
+  ) 
 
+ion_overlaps
 
-
-
-exons_bed <- system.file("extdata", "exons.bed",
-                         package = "HelloRangesData")
-
-build <- system.file("extdata", "hg19.genome",
-                     package = "HelloRangesData") %>% 
-  read.delim(header = FALSE, col.names = c("seqnames", "width")) %>%
-  as_granges(start = 1) %>%
-  set_genome_info(genome = "hg19", seqlengths = width(.))
-
-exons <- read_bed(exons_bed, genome_info = build)
-
-cpg_bed <- system.file("extdata", "cpg.bed", package = "HelloRangesData")
-
-cpg <- read_bed(cpg_bed, genome_info = build)
-
-
-
-
-library(plyranges, quietly = TRUE)
-genes <- data.frame(seqnames = "VI", 
-                    start = c(3322, 3030, 1437,  5066, 6426, 836),
-                    end = c(3846, 3338, 2615, 5521, 7565, 1363),
-                    strand = c("-", "-", "-", "+", "+", "+"),
-                    gene_id=c("YFL064C", "YFL065C", "YFL066C", 
-                              "YFL063W", "YFL062W", "YFL067W"),
-                    gc = runif(6),
-                    score = rbinom(6, size = 3, p = 0.1),
-                    stringsAsFactors = FALSE)
-genes <- as_granges(genes)
-
-genes
-
-########### Genomic Ranges
-
-
-
+ion_qtl_granges_id <- ion_qtl_granges_example %>%
+  as_tibble %>%
+  mutate(id = row_number()) %>%
+  dplyr::rename(chr = seqnames)
 ```
 
-MQM_ion_hun_summary
-
+Multi-QTL models
 
 ```{r}
 
-MQM_ion_hun_summary %>%
-  filter(chr == 5) %>%
-  filter(between(pos, 0, 5)) 
+interval_granges_list_df <- qtl_detected_all %>%
+  select(seqnames = chr, 
+         start = ci.low, 
+         end = ci.high,
+         phenotype, model) %>%
+  group_by(phenotype, seqnames) %>%
+  filter(n() != 1) %>%
+  arrange(phenotype) %>%
+  mutate(group = cur_group_id())
 
-qtl_detected_all %>%
-  filter(chr == 5)
+interval_granges_list <- interval_granges_list_df %>%
+  group_split() %>%
+  map(.x =., 
+      .f = ~ as_granges(.x)) %>%
+  GRangesList
 
+reduced_intervals <- interval_granges_list %>%
+  GenomicRanges::reduce(.) %>%
+  as_tibble 
+
+reduced_intervals_info <- interval_granges_list_df %>%
+  left_join(
+    reduced_intervals,
+    by = c("group", "seqnames")
+    ) %>%
+  group_by(seqnames, phenotype, group) %>%
+  mutate(
+    int = grepl("int|WT|HUN", model),
+    int = ifelse(sum(int == T) == 0, F, T)
+  ) %>%
+  select(chr = seqnames, phenotype, group, start.y, end.y, width, 
+         int) %>%
+  distinct %>%
+  ungroup
+
+reduced_intervals_info2 <- qtl_detected_all %>%
+  left_join(reduced_intervals_info, by = c("chr", "phenotype")) %>%
+  arrange(group) %>%
+  mutate(
+    pos2 = pmap_lgl(
+      .l = .,
+      .f = ~ with(
+        list(...),
+        dplyr::between(pos, start.y, end.y)
+        )
+      )
+    ) %>%
+  filter(pos2 == T) %>%
+  group_by(phenotype, chr, group) %>%
+  select(-model) %>%
+  distinct %>%
+  filter(lod == max(lod)) %>%
+  ungroup %>%
+  select(phenotype, chr, pos, int)
+
+
+qtl_detected_all_reduced <- qtl_detected_all %>%
+  anti_join(reduced_intervals_info2, by = c("chr", "phenotype")) %>%
+  mutate(
+    int = grepl("int|WT|HUN", model),
+    int = ifelse(sum(int == T) == 0, F, T)
+  ) %>%
+  bind_rows(reduced_intervals_info2) %>%
+  select(phenotype, chr, pos, int) %>%
+  group_by(phenotype, chr)
+
+hun <- data.frame(hun = hun_cov)
+
+
+qtl_models_all <- qtl_detected_all_reduced %>%
+  mutate(pos = round(pos,0)) %>%
+  arrange(phenotype, chr) %>%
+  group_by(phenotype) %>%
+  mutate(id = as.character(row_number()),
+         term = ifelse(int == "F",
+                       paste("Q", id, sep =""),
+                       paste("hun*Q", id, sep = ""))) %>%
+  left_join(ion_pheno.col) %>%
+  mutate(chr = as.integer(chr)) %>%
+  summarise(
+    chr = list(chr), 
+    pos = list(pos),
+    formula = paste("y ~ ", 
+                    paste(term, collapse = "+"), 
+                    sep = ""),
+    pheno.col = first(pheno.col)) %>%
+  mutate(qtl_model = pmap(
+    .l = .,
+    .f = ~ with (
+      list(...),
+      makeqtl(
+        cross = ion_crossobject,
+        chr = chr,
+        pos = pos
+    )))) %>%
+    mutate(fit_qtl = pmap(
+    .l = .,
+    .f = ~ with (
+      list(...),
+      fitqtl(
+        cross = ion_crossobject,
+        pheno.col = pheno.col,
+        qtl = qtl_model,
+        formula = formula, 
+        covar = hun
+      )
+    )))
+
+qtl_fullmodel_df <- function(data) {
+  
+  fmdf <- data %>%
+  select(phenotype, fit_qtl)  %>%
+  mutate(
+    formula = map_chr(
+      .x = fit_qtl,
+      .f = ~ .x  %>% attr(., "formula")),
+    resultados = map(
+      .x = fit_qtl,
+      .f = ~ .x %>% 
+        .$result.full %>%
+        as_tibble(., rownames = "term"))) %>%
+  unnest(resultados) %>%
+  select(-fit_qtl) %>%
+  filter(term == "Model") %>%
+  rename(
+    p.Chi2 = `Pvalue(Chi2)`,
+    p.F = `Pvalue(F)`
+    ) %>%
+  mutate(
+    s.Chi2 = p.value_to_ast(p.Chi2),
+    s.F = p.value_to_ast(p.F),
+    term = "Full Model"
+    ) %>%
+  select(phenotype:`%var`, contains(".Chi2"), contains(".F")) %>%
+  mutate(across( c(df:`%var`), ~ round(., 2)),
+         across(c(p.Chi2, p.F), 
+                ~ formatC(., format = "e", digits = 2)))
+  
+  return(fmdf)
+  
+}
+
+
+qtl_full_model_results <- qtl_models_all %>%
+  qtl_fullmodel_df(.)
+
+#drop one table
+
+qtl_dropone_df <- function(data) {
+  
+  dodf <- data %>%
+    select(phenotype, fit_qtl)  %>%
+  mutate(
+    formula = map_chr(
+      .x = fit_qtl,
+      .f = ~ .x  %>% attr(., "formula")),
+    resultados = map(
+      .x = fit_qtl,
+      .f = ~ .x %>% .$result.drop %>% as_tibble(., rownames = "qtl")),
+    formulas = map(
+      .x = fit_qtl,
+      .f = ~ .x %>% .$result.drop %>% attr(., "formulas"))) %>%
+  unnest(c(resultados, formulas)) %>%
+  mutate(term = map2_chr(
+    .x = formula,
+    .y = formulas,
+    .f = ~ Reduce(
+      setdiff,
+      strsplit(c(.x, .y), split = " ")
+      ) %>% .[[1]]
+    )) %>%
+  select(-fit_qtl) %>%
+  rename(
+    p.Chi2 = `Pvalue(Chi2)`,
+    p.F = `Pvalue(F)`) %>%
+  mutate(
+    s.Chi2 = p.value_to_ast(p.Chi2),
+    s.F = p.value_to_ast(p.F),
+    term = ifelse(term == "+", "Q1", term)
+    ) %>%
+  select(phenotype, formula, term, qtl, df:`%var`, contains(".Chi2"),
+         contains(".F")) %>%
+  mutate(across( c(df:`%var`),
+                 ~ round(., 2)),
+         across(c(p.Chi2, p.F), 
+                ~ formatC(., format = "e", digits = 2)
+                )
+         ) 
+  return(dodf)
+  
+}
+
+qtl_drop_one_results
+
+qtl_models_all %>%
+  qtl_dropone_df(.) %>%
+  filter(if_any(c(p.F, s.F), ~ grepl("N\\.S\\.|^\\*$", .))) %>%
+  select(phenotype:qtl, LOD, `%var`, p.F, s.F)
+
+qtl_full_model_results %>%
+  filter(if_any(c(p.F, s.F), ~ grepl("N\\.S\\.|^\\*$", .))) %>%
+  select(phenotype:term, LOD, `%var`, s.Chi2, s.F)
+
+Reduce(
+      setdiff,
+      strsplit(c(texto, texto2), split = " ")
+      )
 ```
 
