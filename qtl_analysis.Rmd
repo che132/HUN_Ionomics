@@ -2302,6 +2302,7 @@ qtl_detected_all_reduced <- qtl_detected_all %>%
 
 hun <- data.frame(hun = hun_cov)
 
+
 qtl_models_all <- qtl_detected_all_reduced %>%
   mutate(pos = round(pos,0)) %>%
   arrange(phenotype, chr) %>%
@@ -2341,8 +2342,9 @@ qtl_models_all <- qtl_detected_all_reduced %>%
       )
     )))
 
-qtl_full_model_results 
-qtl_models_all %>%
+qtl_fullmodel_df <- function(data) {
+  
+  fmdf <- data %>%
   select(phenotype, fit_qtl)  %>%
   mutate(
     formula = map_chr(
@@ -2369,10 +2371,75 @@ qtl_models_all %>%
   mutate(across( c(df:`%var`), ~ round(., 2)),
          across(c(p.Chi2, p.F), 
                 ~ formatC(., format = "e", digits = 2)))
+  
+  return(fmdf)
+  
+}
 
 
-                                   
+qtl_full_model_results <- qtl_models_all %>%
+  qtl_fullmodel_df(.)
 
+#drop one table
 
+qtl_dropone_df <- function(data) {
+  
+  dodf <- data %>%
+    select(phenotype, fit_qtl)  %>%
+  mutate(
+    formula = map_chr(
+      .x = fit_qtl,
+      .f = ~ .x  %>% attr(., "formula")),
+    resultados = map(
+      .x = fit_qtl,
+      .f = ~ .x %>% .$result.drop %>% as_tibble(., rownames = "qtl")),
+    formulas = map(
+      .x = fit_qtl,
+      .f = ~ .x %>% .$result.drop %>% attr(., "formulas"))) %>%
+  unnest(c(resultados, formulas)) %>%
+  mutate(term = map2_chr(
+    .x = formula,
+    .y = formulas,
+    .f = ~ Reduce(
+      setdiff,
+      strsplit(c(.x, .y), split = " ")
+      ) %>% .[[1]]
+    )) %>%
+  select(-fit_qtl) %>%
+  rename(
+    p.Chi2 = `Pvalue(Chi2)`,
+    p.F = `Pvalue(F)`) %>%
+  mutate(
+    s.Chi2 = p.value_to_ast(p.Chi2),
+    s.F = p.value_to_ast(p.F),
+    term = ifelse(term == "+", "Q1", term)
+    ) %>%
+  select(phenotype, formula, term, qtl, df:`%var`, contains(".Chi2"),
+         contains(".F")) %>%
+  mutate(across( c(df:`%var`),
+                 ~ round(., 2)),
+         across(c(p.Chi2, p.F), 
+                ~ formatC(., format = "e", digits = 2)
+                )
+         ) 
+  return(dodf)
+  
+}
+
+qtl_drop_one_results
+
+qtl_models_all %>%
+  qtl_dropone_df(.) %>%
+  filter(if_any(c(p.F, s.F), ~ grepl("N\\.S\\.|^\\*$", .))) %>%
+  select(phenotype:qtl, LOD, `%var`, p.F, s.F)
+
+qtl_full_model_results %>%
+  filter(if_any(c(p.F, s.F), ~ grepl("N\\.S\\.|^\\*$", .))) %>%
+  select(phenotype:term, LOD, `%var`, s.Chi2, s.F)
+
+Reduce(
+      setdiff,
+      strsplit(c(texto, texto2), split = " ")
+      )
 ```
 
